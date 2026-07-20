@@ -230,6 +230,119 @@ def slerp(val, low, high):
 # ------------------------------------------------------------------------------------------------------------------ #
 # Comfy classes                                                                                                      #
 # ------------------------------------------------------------------------------------------------------------------ #
+class YANCLoadTextFromFolder:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                {
+                 "text_folder": ("STRING", {"default": ""}),
+                 },
+                "optional":
+                    {"index": ("INT",
+                               {"default": -1,
+                                "min": -1,
+                                "max": 0xffffffffffffffff,
+                                "forceInput": True})}
+                }
+    CATEGORY = yanc_root_name + yanc_sub_text # Moved to text category as it loads strings now
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("text_content", "file_name")
+    FUNCTION = "do_it"
+
+    def do_it(self, text_folder, index=-1):
+        # Get the input directory from ComfyUI folder_paths
+        base_path = folder_paths.get_input_directory()
+        
+        # Construct the full path to the subfolder provided by the user
+        full_folder_path = os.path.join(base_path, text_folder)
+        
+        if not os.path.exists(full_folder_path):
+            print_cyan(f"Folder {full_folder_path} does not exist. Returning empty string.")
+            return ("", "None")
+
+        # List all files in the folder
+        try:
+            all_files = os.listdir(full_folder_path)
+        except Exception as e:
+            print_brown(f"Error reading folder: {e}")
+            return ("", "None")
+
+        # Filter for text files (you can add 'csv', 'json' etc here if needed)
+        txt_files = [file for file in all_files if file.lower().endswith(('.txt', '.md', '.log'))]
+        
+        if not txt_files:
+            print_cyan("No .txt files found in the specified folder.")
+            return ("", "None")
+
+        # Sort files to ensure consistent indexing (optional, but recommended)
+        txt_files.sort()
+
+        selected_file = ""
+        
+        if index != -1:
+            print_green("INFO: Index connected.")
+            
+            # Handle out-of-bounds index by wrapping around
+            if len(txt_files) > 0:
+                actual_index = index % len(txt_files)
+                print_green(f"INFO: Using file at index {actual_index}: {txt_files[actual_index]}")
+                selected_file = txt_files[actual_index]
+            else:
+                 selected_file = txt_files[-1] # Fallback if list is empty but we tried to access
+        else:
+            print_green("INFO: Picking a random text file.")
+            import random
+            selected_file = random.choice(txt_files)
+
+        # Read the content of the selected file
+        full_file_path = os.path.join(full_folder_path, selected_file)
+        
+        try:
+            with open(full_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Get stem (filename without extension) for the return name
+            filename_stem = Path(selected_file).stem
+            
+            return (content, filename_stem,)
+            
+        except Exception as e:
+            print_brown(f"Error reading file {selected_file}: {e}")
+            return ("", selected_file)
+
+    @classmethod
+    def IS_CHANGED(s, text_folder, index):
+        # This ensures the node updates when the folder content changes or index changes
+        base_path = folder_paths.get_input_directory()
+        full_folder_path = os.path.join(base_path, text_folder)
+        
+        if not os.path.exists(full_folder_path):
+            return 0
+            
+        files = sorted(os.listdir(full_folder_path))
+        txt_files = [file for file in files if file.lower().endswith(('.txt', '.md', '.log'))]
+        txt_files.sort()
+        
+        # Create a hash of the list of files + the index to detect changes
+        content_to_hash = str(txt_files) + str(index)
+        m = hashlib.sha256()
+        m.update(content_to_hash.encode())
+        return m.digest().hex()
+
+    @classmethod
+    def VALIDATE_INPUTS(s, text_folder, **kwargs):
+        base_path = folder_paths.get_input_directory()
+        full_folder_path = os.path.join(base_path, text_folder)
+        
+        if not os.path.exists(full_folder_path):
+            return f"Folder '{text_folder}' does not exist in input directory."
+            
+        txt_files = [f for f in os.listdir(full_folder_path) if f.lower().endswith(('.txt', '.md', '.log'))]
+        if not txt_files:
+            return f"No .txt files found in folder '{text_folder}'."
+        
+        return True
+# ------------------------------------------------------------------------------------------------------------------ #
 class YANCRotateImage:
     def __init__(self):
         pass
@@ -2402,6 +2515,7 @@ NODE_CLASS_MAPPINGS = {
     "> Text Pick Line by Index": YANCTextPickLineByIndex,
     "> Text Count": YANCTextCount,
     "> Save Text": YANCSaveText,
+    "> Load Text From Folder": YANCLoadTextFromFolder,  # <--- ADD THIS LINE
 
     # Basics
     "> Int to Text": YANCIntToText,
@@ -2463,6 +2577,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "> Text Pick Line by Index": cat_smirk + "> Text Pick Line by Index",
     "> Text Count": cat_smirk + "> Text Count",
     "> Save Text": cat_smirk + "> Save Text",
+    "> Load Text From Folder": cat_smirk + "> Load Text From Folder",  # <--- ADD THIS LINE
 
     # Basics
     "> Int to Text": cat_smirk + "> Int to Text",
