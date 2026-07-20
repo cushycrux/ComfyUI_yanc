@@ -3,7 +3,7 @@
 This is another node collection for ComfyUI. It includes some basic nodes that I find useful, and I've also created them to meet my personal needs.
 
 ## Latest Updates (unofficial addition)
-**2026/07/20**: Added a new node "Load Text from Folder". It works the same was as "Load Image from folder", but it's for TXT files.
+**2026/07/20**: Added a new node "Load Text from Folder". It works the same way as "Load Image from folder", but it's for TXT files.
 
 **2024/08/18**: Added a small post processing suite.
 
