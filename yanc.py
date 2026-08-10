@@ -18,6 +18,8 @@ import json
 import math
 import datetime
 import colorsys
+import re
+import random
 
 cat_smirk = "😼"
 
@@ -385,7 +387,6 @@ class YANCRotateImage:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCText:
     def __init__(self):
         pass
@@ -416,7 +417,6 @@ class YANCText:
         return (text, char_count,)
 
 # ------------------------------------------------------------------------------------------------------------------ #
-
 
 class YANCTextCount:
     def __init__(self):
@@ -453,7 +453,6 @@ class YANCTextCount:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCTextCombine:
     def __init__(self):
         pass
@@ -489,7 +488,6 @@ class YANCTextCombine:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCTextPickRandomLine:
     def __init__(self):
         pass
@@ -518,7 +516,6 @@ class YANCTextPickRandomLine:
         return (line,)
 
 # ------------------------------------------------------------------------------------------------------------------ #
-
 
 class YANCClearText:
     def __init__(self):
@@ -560,10 +557,9 @@ class YANCClearText:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCTextReplace:
     def __init__(self):
-        pass
+        print("[YANC] YANCTextReplace initialized")
 
     @classmethod
     def INPUT_TYPES(s):
@@ -572,26 +568,66 @@ class YANCTextReplace:
                 "text": ("STRING", {"forceInput": True}),
                 "find": ("STRING", {
                     "multiline": False,
-                    "Default": "find"
+                    "default": ""
                 }),
                 "replace": ("STRING", {
                     "multiline": False,
-                    "Default": "replace"
+                    "default": ""
                 }),
             },
         }
 
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("text",)
-
     FUNCTION = "do_it"
-
-    CATEGORY = yanc_root_name + yanc_sub_text
+    CATEGORY = yanc_root_name + yanc_sub_text  # Ensure these are defined globally
 
     def do_it(self, text, find, replace):
-        text = text.replace(find, replace)
+        print(f"[YANC] DEBUG START")
+        print(f"[YANC] Input Text: '{text}'")
+        print(f"[YANC] Find String: '{find}'")
+        print(f"[YANC] Replace String (Raw): '{replace}'")
 
-        return (text,)
+        if not find:
+            print("[YANC] WARNING: 'Find' is empty. Returning original text.")
+            return (text,)
+
+        # Helper function to resolve wildcards like {option1|option2}
+        def replace_wildcard(match):
+            raw_content = match.group(1)
+            print(f"[YANC] DEBUG Wildcard Match Found: '{raw_content}'")
+
+            options = raw_content.split("|")
+            valid_options = [opt.strip() for opt in options if opt.strip()]
+
+            print(f"[YANC] DEBUG Options Parsed: {valid_options}")
+
+            if valid_options:
+                choice = random.choice(valid_options)
+                print(f"[YANC] DEBUG Selected Option: '{choice}'")
+                return choice
+            else:
+                print("[YANC] DEBUG No valid options found, returning empty string.")
+                return ""
+
+        # Apply wildcard resolution to the 'replace' string ONLY
+        processed_replace = re.sub(r"\{([^{}]+)\}", replace_wildcard, replace)
+
+        print(f"[YANC] DEBUG Processed Replace String: '{processed_replace}'")
+
+        # Perform standard text replacement
+        if find in text:
+            final_text = text.replace(find, processed_replace)
+            print(f"[YANC] Replacement performed. Final Text: '{final_text}'")
+        else:
+            final_text = text
+            print(f"[YANC] 'Find' string not found in text. Returning original text.")
+
+        return (final_text,)
+
+    @classmethod
+    def IS_CHANGED(s, text, find, replace):
+        return random.random()
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
