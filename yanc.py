@@ -235,23 +235,28 @@ def slerp(val, low, high):
 class YANCLoadTextFromFolder:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required":
-                {
-                 "text_folder": ("STRING", {"default": ""}),
-                 },
-                "optional":
-                    {"index": ("INT",
-                               {"default": -1,
-                                "min": -1,
-                                "max": 0xffffffffffffffff,
-                                "forceInput": True})}
-                }
-    CATEGORY = yanc_root_name + yanc_sub_text # Moved to text category as it loads strings now
+        return {
+            "required": {
+                "text_folder": ("STRING", {"default": ""}),
+                "include_subfolders": ("BOOLEAN", {"default": False}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}), # <--- UI Widget (matching the Image node)
+            },
+            "optional": {
+                "index": ("INT", {
+                    "default": -1,
+                    "min": -1,
+                    "max": 0xffffffffffffffff,
+                    "forceInput": True
+                })
+            }
+        }
+
+    CATEGORY = yanc_root_name + yanc_sub_text
     RETURN_TYPES = ("STRING", "STRING")
     RETURN_NAMES = ("text_content", "file_name")
     FUNCTION = "do_it"
 
-    def do_it(self, text_folder, index=-1):
+    def do_it(self, text_folder, include_subfolders, seed, index=-1):
         # Get the input directory from ComfyUI folder_paths
         base_path = folder_paths.get_input_directory()
         
@@ -262,39 +267,42 @@ class YANCLoadTextFromFolder:
             print_cyan(f"Folder {full_folder_path} does not exist. Returning empty string.")
             return ("", "None")
 
-        # List all files in the folder
-        try:
-            all_files = os.listdir(full_folder_path)
-        except Exception as e:
-            print_brown(f"Error reading folder: {e}")
-            return ("", "None")
+        valid_extensions = ('.txt', '.md', '.log', '.caption')
+        txt_files = []
 
-        # Filter for text files (you can add 'csv', 'json' etc here if needed)
-        txt_files = [file for file in all_files if file.lower().endswith(('.txt', '.md', '.log'))]
+        if include_subfolders:
+            for root, _, files in os.walk(full_folder_path):
+                for file in files:
+                    if file.lower().endswith(valid_extensions):
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, full_folder_path)
+                        txt_files.append(rel_path.replace("\\", "/"))
+        else:
+            try:
+                all_files = os.listdir(full_folder_path)
+                txt_files = [file for file in all_files if file.lower().endswith(valid_extensions)]
+            except Exception as e:
+                print_brown(f"Error reading folder: {e}")
+                return ("", "None")
         
         if not txt_files:
-            print_cyan("No .txt files found in the specified folder.")
+            print_cyan("No valid text/caption files found in the specified folder configuration.")
             return ("", "None")
 
-        # Sort files to ensure consistent indexing (optional, but recommended)
         txt_files.sort()
 
         selected_file = ""
         
         if index != -1:
             print_green("INFO: Index connected.")
-            
-            # Handle out-of-bounds index by wrapping around
-            if len(txt_files) > 0:
-                actual_index = index % len(txt_files)
-                print_green(f"INFO: Using file at index {actual_index}: {txt_files[actual_index]}")
-                selected_file = txt_files[actual_index]
-            else:
-                 selected_file = txt_files[-1] # Fallback if list is empty but we tried to access
+            actual_index = index % len(txt_files)
+            print_green(f"INFO: Using text file at index {actual_index}: {txt_files[actual_index]}")
+            selected_file = txt_files[actual_index]
         else:
-            print_green("INFO: Picking a random text file.")
-            import random
-            selected_file = random.choice(txt_files)
+            print_green(f"INFO: Random seed pick. Total files: {len(txt_files)}")
+            # Independent RNG instance using the widget seed value
+            rng = random.Random(seed)
+            selected_file = rng.choice(txt_files)
 
         # Read the content of the selected file
         full_file_path = os.path.join(full_folder_path, selected_file)
@@ -303,9 +311,7 @@ class YANCLoadTextFromFolder:
             with open(full_file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # Get stem (filename without extension) for the return name
             filename_stem = Path(selected_file).stem
-            
             return (content, filename_stem,)
             
         except Exception as e:
@@ -313,37 +319,22 @@ class YANCLoadTextFromFolder:
             return ("", selected_file)
 
     @classmethod
-    def IS_CHANGED(s, text_folder, index):
-        # This ensures the node updates when the folder content changes or index changes
-        base_path = folder_paths.get_input_directory()
-        full_folder_path = os.path.join(base_path, text_folder)
-        
-        if not os.path.exists(full_folder_path):
-            return 0
-            
-        files = sorted(os.listdir(full_folder_path))
-        txt_files = [file for file in files if file.lower().endswith(('.txt', '.md', '.log'))]
-        txt_files.sort()
-        
-        # Create a hash of the list of files + the index to detect changes
-        content_to_hash = str(txt_files) + str(index)
+    def IS_CHANGED(s, text_folder, include_subfolders, seed, index=-1):
         m = hashlib.sha256()
-        m.update(content_to_hash.encode())
+        footprint = f"{text_folder}_{include_subfolders}_{seed}_{index}"
+        m.update(footprint.encode())
         return m.digest().hex()
 
     @classmethod
-    def VALIDATE_INPUTS(s, text_folder, **kwargs):
+    def VALIDATE_INPUTS(s, text_folder, include_subfolders, seed, **kwargs):
         base_path = folder_paths.get_input_directory()
         full_folder_path = os.path.join(base_path, text_folder)
         
         if not os.path.exists(full_folder_path):
             return f"Folder '{text_folder}' does not exist in input directory."
-            
-        txt_files = [f for f in os.listdir(full_folder_path) if f.lower().endswith(('.txt', '.md', '.log'))]
-        if not txt_files:
-            return f"No .txt files found in folder '{text_folder}'."
         
         return True
+
 # ------------------------------------------------------------------------------------------------------------------ #
 class YANCRotateImage:
     def __init__(self):
@@ -863,70 +854,134 @@ class YANCSaveImage:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCLoadImageFromFolder:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required":
-                {"image_folder": ("STRING", {"default": ""})
-                 },
-                "optional":
-                    {"index": ("INT",
-                               {"default": -1,
-                                "min": -1,
-                                "max": 0xffffffffffffffff,
-                                "forceInput": True})}
-                }
+        return {
+            "required": {
+                "image_folder": ("STRING", {"default": ""}),
+                "include_subfolders": ("BOOLEAN", {"default": False}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "scale_enabled": ("BOOLEAN", {"default": False}),
+                "megapixel_target": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 64.0, "step": 0.1}),
+            },
+            "optional": {
+                "index": ("INT", {
+                    "default": -1,
+                    "min": -1,
+                    "max": 0xffffffffffffffff,
+                    "forceInput": True
+                })
+            }
+        }
 
     CATEGORY = yanc_root_name + yanc_sub_image
 
-    RETURN_TYPES = ("IMAGE", "STRING")
-    RETURN_NAMES = ("image", "file_name")
+    # --- Added "STRING" type and "caption" name to the outputs ---
+    RETURN_TYPES = ("IMAGE", "STRING", "INT", "INT", "STRING")
+    RETURN_NAMES = ("image", "file_name", "width", "height", "caption")
     FUNCTION = "do_it"
 
-    def do_it(self, image_folder, index=-1):
+    def do_it(self, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, index=-1):
+        base_path = folder_paths.get_input_directory()
+        target_folder_path = os.path.join(base_path, image_folder)
 
-        image_path = os.path.join(
-            folder_paths.get_input_directory(), image_folder)
+        if not os.path.exists(target_folder_path):
+            print_brown(f"Folder {target_folder_path} does not exist.")
+            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+            return (empty_image, "None", 64, 64, "")
 
-        files = os.listdir(image_path)
+        valid_extensions = ('.jpg', '.jpeg', '.png', '.webp')
+        image_files = []
 
-        image_files = [file for file in files if file.endswith(
-            ('.jpg', '.jpeg', '.png', '.webp'))]
+        if include_subfolders:
+            for root, _, files in os.walk(target_folder_path):
+                for file in files:
+                    if file.lower().endswith(valid_extensions):
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, target_folder_path)
+                        image_files.append(rel_path.replace("\\", "/"))
+        else:
+            try:
+                files = os.listdir(target_folder_path)
+                image_files = [file for file in files if file.lower().endswith(valid_extensions)]
+            except Exception as e:
+                print_brown(f"Error reading folder: {e}")
+                return (torch.zeros((1, 64, 64, 3)), "None", 64, 64, "")
+
+        if not image_files:
+            print_cyan(f"No valid images found in: {image_folder}")
+            return (torch.zeros((1, 64, 64, 3)), "None", 64, 64, "")
+
+        image_files.sort()
 
         if index != -1:
             print_green("INFO: Index connected.")
-
-            if index > len(image_files) - 1:
-                index = index % len(image_files)
-                print_green(
-                    "INFO: Index too high, falling back to: " + str(index))
-
-            image_file = image_files[index]
+            actual_index = index % len(image_files)
+            image_file = image_files[actual_index]
         else:
-            print_green("INFO: Picking a random image.")
-            image_file = random.choice(image_files)
+            print_green(f"INFO: Random seed pick. Total images: {len(image_files)}")
+            rng = random.Random(seed)
+            image_file = rng.choice(image_files)
 
         filename = Path(image_file).stem
+        img_path = os.path.join(target_folder_path, image_file)
 
-        img_path = os.path.join(image_path, image_file)
+        # --- New Caption Pairing Functionality ---
+        caption_content = ""
+        # Find the text file by replacing the image extension with .txt in its absolute path
+        txt_path = os.path.splitext(img_path)[0] + ".txt"
+        
+        if os.path.exists(txt_path):
+            try:
+                with open(txt_path, "r", encoding="utf-8") as f:
+                    caption_content = f.read()
+                print_green(f"INFO: Loaded pairing caption file for {filename}")
+            except Exception as e:
+                print_brown(f"Error reading caption file {txt_path}: {e}")
+                caption_content = ""
 
-        img = Image.open(img_path)
-        img = ImageOps.exif_transpose(img)
-        if img.mode == 'I':
-            img = img.point(lambda i: i * (1 / 255))
-        output_image = img.convert("RGB")
-        output_image = np.array(output_image).astype(np.float32) / 255.0
-        output_image = torch.from_numpy(output_image)[None,]
+        try:
+            img = Image.open(img_path)
+            img = ImageOps.exif_transpose(img)
+            
+            width, height = img.size
 
-        return (output_image, filename)
+            if img.mode == 'I':
+                img = img.point(lambda i: i * (1 / 255))
+            
+            output_image = img.convert("RGB")
+            output_image = np.array(output_image).astype(np.float32) / 255.0
+            output_image = torch.from_numpy(output_image)[None,]
+
+            if scale_enabled:
+                samples = output_image.movedim(-1, 1)
+                
+                current_pixels = (width * height) / 1000000.0
+                scale_factor = math.sqrt(megapixel_target / current_pixels)
+                
+                new_width = int(round(width * scale_factor))
+                new_height = int(round(height * scale_factor))
+                
+                new_width = max(64, (new_width // 8) * 8)
+                new_height = max(64, (new_height // 8) * 8)
+                
+                samples = comfy.utils.common_upscale(samples, new_width, new_height, "lanczos", "center")
+                
+                output_image = samples.movedim(1, -1)
+                width, height = new_width, new_height
+
+            return (output_image, filename, width, height, caption_content)
+            
+        except Exception as e:
+            print_brown(f"Error loading image {image_file}: {e}")
+            return (torch.zeros((1, 64, 64, 3)), "Error", 64, 64, "")
 
     @classmethod
-    def IS_CHANGED(s, image_folder, index):
-        image_path = folder_paths.get_input_directory()
+    def IS_CHANGED(s, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, index=-1):
         m = hashlib.sha256()
-        with open(image_path, 'rb') as f:
-            m.update(f.read())
+        footprint = f"{image_folder}_{include_subfolders}_{seed}_{scale_enabled}_{megapixel_target}_{index}"
+        m.update(footprint.encode())
         return m.digest().hex()
 
 # ------------------------------------------------------------------------------------------------------------------ #
@@ -2565,7 +2620,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "> Save Image": cat_smirk + "> Save Image",
     "> Load Image From Folder": cat_smirk + "> Load Image From Folder",
     "> Normal Map Lighting": cat_smirk + "> Normal Map Lighting",
-
+    
     # Post Processing
     "> Brightness": cat_smirk + "> Brightness",
     "> Contrast": cat_smirk + "> Contrast",
