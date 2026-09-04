@@ -240,7 +240,8 @@ class YANCLoadTextFromFolder:
                 "text_folder": ("STRING", {"default": ""}),
                 "include_subfolders": ("BOOLEAN", {"default": False}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                # Fixed: Index moved into the required block with text-only parameters
+            },
+            "optional": {
                 "index": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff, "forceInput": True})
             }
         }
@@ -250,7 +251,7 @@ class YANCLoadTextFromFolder:
     RETURN_NAMES = ("text_content", "file_name")
     FUNCTION = "do_it"
 
-    def do_it(self, text_folder, include_subfolders, seed, sequential_mode, current_index, index=-1):
+    def do_it(self, text_folder, include_subfolders, seed, index=-1):
         base_path = folder_paths.get_input_directory()
         full_folder_path = os.path.join(base_path, text_folder)
         
@@ -283,15 +284,7 @@ class YANCLoadTextFromFolder:
         txt_files.sort()
         total_files = len(txt_files)
 
-        if sequential_mode:
-            if current_index >= total_files:
-                print_red(f"❌ STOPPING QUEUE: Last text file reached from index. Handled text file {total_files} from {total_files}.")
-                raise IndexError(f"Sequential processing complete! All {total_files} text files processed.")
-            
-            actual_index = current_index
-            selected_file = txt_files[actual_index]
-            print_green(f"ℹ️ [Sequential Mode] Processing text file {actual_index + 1} of {total_files}: {selected_file}")
-        elif index != -1:
+        if index != -1:
             actual_index = index % total_files
             selected_file = txt_files[actual_index]
             print_green(f"ℹ️ [External Index Overrode] Processing text file {actual_index + 1} of {total_files}")
@@ -327,6 +320,7 @@ class YANCLoadTextFromFolder:
             return f"Folder '{text_folder}' does not exist in input directory."
         
         return True
+
 
 # ------------------------------------------------------------------------------------------------------------------ #
 class YANCRotateImage:
