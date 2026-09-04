@@ -240,6 +240,8 @@ class YANCLoadTextFromFolder:
                 "text_folder": ("STRING", {"default": ""}),
                 "include_subfolders": ("BOOLEAN", {"default": False}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "sequential_mode": ("BOOLEAN", {"default": False}),
+                "reset_sequential": ("BOOLEAN", {"default": False}),
             },
             "optional": {
                 "index": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff, "forceInput": True})
@@ -251,7 +253,13 @@ class YANCLoadTextFromFolder:
     RETURN_NAMES = ("text_content", "file_name")
     FUNCTION = "do_it"
 
-    def do_it(self, text_folder, include_subfolders, seed, index=-1):
+    def do_it(self, text_folder, include_subfolders, seed, sequential_mode, reset_sequential, index=-1):
+        tracker_key = f"text_{text_folder}"
+        tracker = globals().get("YANC_FOLDER_INDEX_TRACKER", {})
+
+        if reset_sequential or tracker_key not in tracker:
+            tracker[tracker_key] = 0
+
         base_path = folder_paths.get_input_directory()
         full_folder_path = os.path.join(base_path, text_folder)
         
@@ -284,7 +292,22 @@ class YANCLoadTextFromFolder:
         txt_files.sort()
         total_files = len(txt_files)
 
-        if index != -1:
+        if sequential_mode:
+            current_index = tracker.get(tracker_key, 0)
+            
+            if current_index >= total_files:
+                print(f"\033[91m❌ QUEUE COMPLETE: Last text file reached from index. Handled text file {total_files} from {total_files}.\033[0m")
+                tracker[tracker_key] = 0
+                nodes.interrupt_processing()
+                return ("", "Finished")
+            
+            actual_index = current_index
+            selected_file = txt_files[actual_index]
+            print_green(f"ℹ️ [Sequential Mode] Processing text file {actual_index + 1} of {total_files}: {selected_file}")
+            
+            tracker[tracker_key] += 1
+
+        elif index != -1:
             actual_index = index % total_files
             selected_file = txt_files[actual_index]
             print_green(f"ℹ️ [External Index Overrode] Processing text file {actual_index + 1} of {total_files}")
@@ -305,14 +328,17 @@ class YANCLoadTextFromFolder:
             return ("", selected_file)
 
     @classmethod
-    def IS_CHANGED(s, text_folder, include_subfolders, seed, index=-1):
+    def IS_CHANGED(s, text_folder, include_subfolders, seed, sequential_mode, reset_sequential, index=-1):
+        # Force a refresh every queue execution if using sequential mode
+        if sequential_mode:
+            return random.random()
         m = hashlib.sha256()
-        footprint = f"{text_folder}_{include_subfolders}_{seed}_{index}"
+        footprint = f"{text_folder}_{include_subfolders}_{seed}_{index}_{reset_sequential}"
         m.update(footprint.encode())
         return m.digest().hex()
 
     @classmethod
-    def VALIDATE_INPUTS(s, text_folder, include_subfolders, seed, **kwargs):
+    def VALIDATE_INPUTS(s, text_folder, include_subfolders, seed, sequential_mode, reset_sequential, **kwargs):
         base_path = folder_paths.get_input_directory()
         full_folder_path = os.path.join(base_path, text_folder)
         
@@ -320,7 +346,6 @@ class YANCLoadTextFromFolder:
             return f"Folder '{text_folder}' does not exist in input directory."
         
         return True
-
 
 # ------------------------------------------------------------------------------------------------------------------ #
 class YANCRotateImage:
