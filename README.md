@@ -3,6 +3,8 @@
 This is another node collection for ComfyUI. It includes some basic nodes that I find useful, and I've also created them to meet my personal needs.
 
 ## Latest Updates (unofficial addition)
+**2026/09/04**: Added new functionality to the "Load Image From Folder" node, It loads now a random image from a folder or subfolders! It loads captions automatically with the image (if there), it outputs the filename, height and width of the image, it can up- or downscale the image on the fly (megapixels, preserves the image ratio), all in one run!
+
 **2026/08/10**: Added new functionality to the "Text Replace" node, so the user can add wildcards and other regex functions. (e.g {red|green} for randomizing words etc.)
 
 **2026/07/20**: Added a new node "Load Text from Folder". It works the same way as "Load Image from folder", but it's for TXT files.
