@@ -10,6 +10,8 @@ Removed overwrite warning toggle from "Save Image" node. It will skip images and
 
 "Save Image" can now save .webp additionally.
 
+"Load Text From Folder" has now also the sequential loading feature (index).
+
 **2026/09/04**: Added new functionality to the "Load Image From Folder" node, It loads now a random image from a folder or subfolders! It loads captions automatically with the image (if there), it outputs the filename, height and width of the image, it can up- or downscale the image on the fly (megapixels, preserves the image ratio), all in one run!
 
 **2026/08/10**: Added new functionality to the "Text Replace" node, so the user can add wildcards and other regex functions. (e.g {red|green} for randomizing words etc.)
