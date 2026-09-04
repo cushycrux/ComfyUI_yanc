@@ -3,6 +3,13 @@
 This is another node collection for ComfyUI. It includes some basic nodes that I find useful, and I've also created them to meet my personal needs.
 
 ## Latest Updates (unofficial addition)
+**2026/09/04**: 2nd update today. Added new functionality to the "Load Image From Folder" node. Index function added (sequential mode). This will load Images in sequence, for each queue one until all are loaded once, then it will interrupt the job until the auto queuing is stopped, - this can be used for captioning. Demo workflow added (AI Tocha).
+
+Removed overwrite warning toggle from "Save Image" node. It will skip images and tell on the console.
+"Save Text" and "Save Image" can now save everywhere on the system and will create folders if they don't exist.
+
+"Save Image" can now save .webp additionally.
+
 **2026/09/04**: Added new functionality to the "Load Image From Folder" node, It loads now a random image from a folder or subfolders! It loads captions automatically with the image (if there), it outputs the filename, height and width of the image, it can up- or downscale the image on the fly (megapixels, preserves the image ratio), all in one run!
 
 **2026/08/10**: Added new functionality to the "Text Replace" node, so the user can add wildcards and other regex functions. (e.g {red|green} for randomizing words etc.)
