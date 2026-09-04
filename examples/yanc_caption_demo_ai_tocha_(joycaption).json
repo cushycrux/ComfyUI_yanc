@@ -1,0 +1,466 @@
+{
+  "id": "e00590c0-d76d-4e8f-97d4-8869b7285fbb",
+  "revision": 0,
+  "last_node_id": 20,
+  "last_link_id": 33,
+  "nodes": [
+    {
+      "id": 8,
+      "type": "AITochaCaptionLoader",
+      "pos": [
+        1100,
+        240
+      ],
+      "size": [
+        400,
+        90
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "vlm",
+          "type": "AITOCHA_VLM",
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "AITocha/ComfyUI-AITocha-Vision",
+        "ver": "c0b7f5d9d20ab805e93d7fecd2df02ce87b41582",
+        "Node name for S&R": "AITochaCaptionLoader"
+      },
+      "widgets_values": [
+        "fancyfeast/llama-joycaption-beta-one-hf-llava",
+        "8-bit"
+      ]
+    },
+    {
+      "id": 4,
+      "type": "AITochaCaption",
+      "pos": [
+        1100,
+        370
+      ],
+      "size": [
+        400,
+        510
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "vlm",
+          "type": "AITOCHA_VLM",
+          "link": 7
+        },
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 23
+        }
+      ],
+      "outputs": [
+        {
+          "name": "caption",
+          "type": "STRING",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "AITocha/ComfyUI-AITocha-Vision",
+        "ver": "c0b7f5d9d20ab805e93d7fecd2df02ce87b41582",
+        "Node name for S&R": "AITochaCaption"
+      },
+      "widgets_values": [
+        "Scene only (no identity)",
+        "Long descriptive caption",
+        300,
+        0.6,
+        0.9,
+        231821744700029,
+        "randomize",
+        "You are an expert image captioner. Describe the pose, body position, clothing or lack thereof, setting, lighting, camera angle, framing, and overall composition of the image. Focus only on what is happening and where, not who is in the image. Do NOT describe the subject's facial features, hair color, eye color, age, or any identifying physical traits.",
+        ""
+      ]
+    },
+    {
+      "id": 2,
+      "type": "PreviewImage",
+      "pos": [
+        750,
+        310
+      ],
+      "size": [
+        310,
+        310
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 22
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": []
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 6,
+      "type": "PreviewAny",
+      "pos": [
+        1520,
+        370
+      ],
+      "size": [
+        320,
+        330
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": [
+            29
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 3,
+      "type": "PreviewAny",
+      "pos": [
+        1520,
+        740
+      ],
+      "size": [
+        320,
+        130
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 30
+        }
+      ],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 17,
+      "type": "> Load Image From Folder",
+      "pos": [
+        340,
+        310
+      ],
+      "size": [
+        380,
+        320
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "index",
+          "shape": 7,
+          "type": "INT",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            22,
+            23,
+            28
+          ]
+        },
+        {
+          "name": "file_name",
+          "type": "STRING",
+          "links": [
+            30,
+            32,
+            33
+          ]
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "caption",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "ComfyUI_yanc",
+        "ver": "923c366c2937cf6ce55e8a808e29f23831281bb5",
+        "Node name for S&R": "> Load Image From Folder"
+      },
+      "widgets_values": [
+        "S:\\AI\\AI-Toolkit\\AI-Toolkit\\datasets\\D4v3\\00_Newset\\img\\10_D4v3",
+        false,
+        508797842589202,
+        "randomize",
+        true,
+        2.07,
+        true,
+        false
+      ]
+    },
+    {
+      "id": 18,
+      "type": "> Save Text",
+      "pos": [
+        1860,
+        350
+      ],
+      "size": [
+        270,
+        102
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "text",
+          "type": "STRING",
+          "link": 29
+        },
+        {
+          "name": "filename_opt",
+          "shape": 7,
+          "type": "STRING",
+          "link": 33
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "ComfyUI_yanc",
+        "ver": "923c366c2937cf6ce55e8a808e29f23831281bb5",
+        "Node name for S&R": "> Save Text"
+      },
+      "widgets_values": [
+        "",
+        "S:\\AI\\AI-Toolkit\\AI-Toolkit\\datasets\\D4v3\\00_Newset\\img\\dave"
+      ]
+    },
+    {
+      "id": 19,
+      "type": "> Save Image",
+      "pos": [
+        1860,
+        490
+      ],
+      "size": [
+        270,
+        150
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 28
+        },
+        {
+          "name": "filename_opt",
+          "shape": 7,
+          "type": "STRING",
+          "link": 32
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "ComfyUI_yanc",
+        "ver": "923c366c2937cf6ce55e8a808e29f23831281bb5",
+        "Node name for S&R": "> Save Image"
+      },
+      "widgets_values": [
+        "",
+        "S:\\AI\\AI-Toolkit\\AI-Toolkit\\datasets\\D4v3\\00_Newset\\img\\dave",
+        "webp",
+        80
+      ]
+    },
+    {
+      "id": 15,
+      "type": "Note",
+      "pos": [
+        340,
+        680
+      ],
+      "size": [
+        380,
+        120
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": [
+        "For captioning, start with index (seed) 0 and increment.\n\n1920/1080 = 2.07 mp\n768/512 = 0.39322 mp\n1024/1024 = 1.05 mp\n512/512 = 0.26214 mp"
+      ],
+      "color": "#323",
+      "bgcolor": "#535"
+    }
+  ],
+  "links": [
+    [
+      5,
+      4,
+      0,
+      6,
+      0,
+      "STRING"
+    ],
+    [
+      7,
+      8,
+      0,
+      4,
+      0,
+      "AITOCHA_VLM"
+    ],
+    [
+      22,
+      17,
+      0,
+      2,
+      0,
+      "IMAGE"
+    ],
+    [
+      23,
+      17,
+      0,
+      4,
+      1,
+      "IMAGE"
+    ],
+    [
+      28,
+      17,
+      0,
+      19,
+      0,
+      "IMAGE"
+    ],
+    [
+      29,
+      6,
+      0,
+      18,
+      0,
+      "STRING"
+    ],
+    [
+      30,
+      17,
+      1,
+      3,
+      0,
+      "STRING"
+    ],
+    [
+      32,
+      17,
+      1,
+      19,
+      1,
+      "STRING"
+    ],
+    [
+      33,
+      17,
+      1,
+      18,
+      1,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.9090909090909091,
+      "offset": [
+        -303.41376340414024,
+        11.42590055324076
+      ]
+    },
+    "frontendVersion": "1.48.6",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true
+  },
+  "version": 0.4
+}
