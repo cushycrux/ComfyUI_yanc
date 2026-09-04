@@ -239,15 +239,9 @@ class YANCLoadTextFromFolder:
             "required": {
                 "text_folder": ("STRING", {"default": ""}),
                 "include_subfolders": ("BOOLEAN", {"default": False}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}), # <--- UI Widget (matching the Image node)
-            },
-            "optional": {
-                "index": ("INT", {
-                    "default": -1,
-                    "min": -1,
-                    "max": 0xffffffffffffffff,
-                    "forceInput": True
-                })
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                # Fixed: Index moved into the required block with text-only parameters
+                "index": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff, "forceInput": True})
             }
         }
 
@@ -256,15 +250,12 @@ class YANCLoadTextFromFolder:
     RETURN_NAMES = ("text_content", "file_name")
     FUNCTION = "do_it"
 
-    def do_it(self, text_folder, include_subfolders, seed, index=-1):
-        # Get the input directory from ComfyUI folder_paths
+    def do_it(self, text_folder, include_subfolders, seed, sequential_mode, current_index, index=-1):
         base_path = folder_paths.get_input_directory()
-        
-        # Construct the full path to the subfolder provided by the user
         full_folder_path = os.path.join(base_path, text_folder)
         
         if not os.path.exists(full_folder_path):
-            print_cyan(f"Folder {full_folder_path} does not exist. Returning empty string.")
+            print_cyan(f"Folder {full_folder_path} does not exist.")
             return ("", "None")
 
         valid_extensions = ('.txt', '.md', '.log', '.caption')
@@ -286,34 +277,36 @@ class YANCLoadTextFromFolder:
                 return ("", "None")
         
         if not txt_files:
-            print_cyan("No valid text/caption files found in the specified folder configuration.")
+            print_cyan("No valid text files found.")
             return ("", "None")
 
         txt_files.sort()
+        total_files = len(txt_files)
 
-        selected_file = ""
-        
-        if index != -1:
-            print_green("INFO: Index connected.")
-            actual_index = index % len(txt_files)
-            print_green(f"INFO: Using text file at index {actual_index}: {txt_files[actual_index]}")
+        if sequential_mode:
+            if current_index >= total_files:
+                print_red(f"❌ STOPPING QUEUE: Last text file reached from index. Handled text file {total_files} from {total_files}.")
+                raise IndexError(f"Sequential processing complete! All {total_files} text files processed.")
+            
+            actual_index = current_index
             selected_file = txt_files[actual_index]
+            print_green(f"ℹ️ [Sequential Mode] Processing text file {actual_index + 1} of {total_files}: {selected_file}")
+        elif index != -1:
+            actual_index = index % total_files
+            selected_file = txt_files[actual_index]
+            print_green(f"ℹ️ [External Index Overrode] Processing text file {actual_index + 1} of {total_files}")
         else:
-            print_green(f"INFO: Random seed pick. Total files: {len(txt_files)}")
-            # Independent RNG instance using the widget seed value
+            print_green(f"ℹ️ [Random Seed Pick] Total files available: {total_files}")
             rng = random.Random(seed)
             selected_file = rng.choice(txt_files)
 
-        # Read the content of the selected file
         full_file_path = os.path.join(full_folder_path, selected_file)
         
         try:
             with open(full_file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            
             filename_stem = Path(selected_file).stem
             return (content, filename_stem,)
-            
         except Exception as e:
             print_brown(f"Error reading file {selected_file}: {e}")
             return ("", selected_file)
@@ -680,209 +673,13 @@ class YANCLoadImageAndFilename:
 
     FUNCTION = "do_it"
 
-    def do_it(self, image, strip_extension):
-        image_path = folder_paths.get_annotated_filepath(image)
-        img = Image.open(image_path)
-        output_images = []
-        output_masks = []
-        for i in ImageSequence.Iterator(img):
-            i = ImageOps.exif_transpose(i)
-            if i.mode == 'I':
-                i = i.point(lambda i: i * (1 / 255))
-            image = i.convert("RGB")
-            image = np.array(image).astype(np.float32) / 255.0
-            image = torch.from_numpy(image)[None,]
-            if 'A' in i.getbands():
-                mask = np.array(i.getchannel('A')).astype(np.float32) / 255.0
-                mask = 1. - torch.from_numpy(mask)
-            else:
-                mask = torch.zeros((64, 64), dtype=torch.float32, device="cpu")
-            output_images.append(image)
-            output_masks.append(mask.unsqueeze(0))
+    def do_it(self, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, sequential_mode, reset_sequential, index=-1):
+        tracker_key = f"image_{image_folder}"
+        tracker = globals().get("YANC_FOLDER_INDEX_TRACKER", {})
 
-        if len(output_images) > 1:
-            output_image = torch.cat(output_images, dim=0)
-            output_mask = torch.cat(output_masks, dim=0)
-        else:
-            output_image = output_images[0]
-            output_mask = output_masks[0]
+        if reset_sequential or tracker_key not in tracker:
+            tracker[tracker_key] = 0
 
-        if strip_extension:
-            filename = Path(image_path).stem
-        else:
-            filename = Path(image_path).name
-
-        return (output_image, output_mask, filename,)
-
-    @classmethod
-    def IS_CHANGED(s, image, strip_extension):
-        image_path = folder_paths.get_annotated_filepath(image)
-        m = hashlib.sha256()
-        with open(image_path, 'rb') as f:
-            m.update(f.read())
-        return m.digest().hex()
-
-    @classmethod
-    def VALIDATE_INPUTS(s, image, strip_extension):
-        if not folder_paths.exists_annotated_filepath(image):
-            return "Invalid image file: {}".format(image)
-
-        return True
-
-# ------------------------------------------------------------------------------------------------------------------ #
-
-
-class YANCSaveImage:
-    def __init__(self):
-        self.output_dir = folder_paths.get_output_directory()
-        self.type = "output"
-        self.prefix_append = ""
-        self.compress_level = 4
-
-    @classmethod
-    def INPUT_TYPES(s):
-        return {"required":
-                {"images": ("IMAGE", ),
-                 "filename_prefix": ("STRING", {"default": "ComfyUI"}),
-                 "folder": ("STRING", {"default": ""}),
-                 "overwrite_warning": ("BOOLEAN", {"default": False}),
-                 "include_metadata": ("BOOLEAN", {"default": True}),
-                 "extension": (["png", "jpg"],),
-                 "quality": ("INT", {"default": 95, "min": 0, "max": 100}),
-                 },
-                "optional":
-                    {"filename_opt": ("STRING", {"forceInput": True})},
-                "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
-                }
-
-    RETURN_TYPES = ()
-    FUNCTION = "do_it"
-
-    OUTPUT_NODE = True
-
-    CATEGORY = yanc_root_name + yanc_sub_image
-
-    def do_it(self, images, overwrite_warning, include_metadata, extension, quality, filename_opt=None, folder=None, filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None,):
-
-        if folder:
-            filename_prefix += self.prefix_append
-            filename_prefix = os.sep.join([folder, filename_prefix])
-        else:
-            filename_prefix += self.prefix_append
-
-        if "%" in filename_prefix:
-            filename_prefix = replace_dt_placeholders(filename_prefix)
-
-        full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(
-            filename_prefix, self.output_dir, images[0].shape[1], images[0].shape[0])
-
-        results = list()
-        for (batch_number, image) in enumerate(images):
-            i = 255. * image.cpu().numpy()
-            img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-            metadata = None
-
-            if not filename_opt:
-
-                filename_with_batch_num = filename.replace(
-                    "%batch_num%", str(batch_number))
-
-                counter = 1
-
-                if os.path.exists(full_output_folder) and os.listdir(full_output_folder):
-                    filtered_filenames = list(filter(
-                        lambda filename: filename.startswith(
-                            filename_with_batch_num + "_")
-                        and filename[len(filename_with_batch_num) + 1:-4].isdigit(),
-                        os.listdir(full_output_folder)
-                    ))
-
-                    if filtered_filenames:
-                        max_counter = max(
-                            int(filename[len(filename_with_batch_num) + 1:-4])
-                            for filename in filtered_filenames
-                        )
-                        counter = max_counter + 1
-
-                file = f"{filename_with_batch_num}_{counter:05}.{extension}"
-            else:
-                if len(images) == 1:
-                    file = f"{filename_opt}.{extension}"
-                else:
-                    raise Exception(
-                        "Multiple images and filename detected: Images will overwrite themselves!")
-
-            save_path = os.path.join(full_output_folder, file)
-
-            if os.path.exists(save_path) and overwrite_warning:
-                raise Exception("Filename already exists.")
-            else:
-                if extension == "png":
-                    if not args.disable_metadata and include_metadata:
-                        metadata = PngInfo()
-                        if prompt is not None:
-                            metadata.add_text("prompt", json.dumps(prompt))
-                        if extra_pnginfo is not None:
-                            for x in extra_pnginfo:
-                                metadata.add_text(
-                                    x, json.dumps(extra_pnginfo[x]))
-
-                    img.save(save_path, pnginfo=metadata,
-                             compress_level=self.compress_level)
-                elif extension == "jpg":
-                    if not args.disable_metadata and include_metadata:
-                        metadata = {}
-
-                        if prompt is not None:
-                            metadata["prompt"] = prompt
-                        if extra_pnginfo is not None:
-                            for key, value in extra_pnginfo.items():
-                                metadata[key] = value
-
-                        metadata_json = json.dumps(metadata)
-                        img.info["comment"] = metadata_json
-
-                    img.save(save_path, quality=quality)
-
-            results.append({
-                "filename": file,
-                "subfolder": subfolder,
-                "type": self.type
-            })
-
-        return {"ui": {"images": results}}
-
-# ------------------------------------------------------------------------------------------------------------------ #
-
-class YANCLoadImageFromFolder:
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-            "required": {
-                "image_folder": ("STRING", {"default": ""}),
-                "include_subfolders": ("BOOLEAN", {"default": False}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "scale_enabled": ("BOOLEAN", {"default": False}),
-                "megapixel_target": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 64.0, "step": 0.1}),
-            },
-            "optional": {
-                "index": ("INT", {
-                    "default": -1,
-                    "min": -1,
-                    "max": 0xffffffffffffffff,
-                    "forceInput": True
-                })
-            }
-        }
-
-    CATEGORY = yanc_root_name + yanc_sub_image
-
-    # --- Added "STRING" type and "caption" name to the outputs ---
-    RETURN_TYPES = ("IMAGE", "STRING", "INT", "INT", "STRING")
-    RETURN_NAMES = ("image", "file_name", "width", "height", "caption")
-    FUNCTION = "do_it"
-
-    def do_it(self, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, index=-1):
         base_path = folder_paths.get_input_directory()
         target_folder_path = os.path.join(base_path, image_folder)
 
@@ -914,37 +711,55 @@ class YANCLoadImageFromFolder:
             return (torch.zeros((1, 64, 64, 3)), "None", 64, 64, "")
 
         image_files.sort()
+        total_images = len(image_files)
 
-        if index != -1:
-            print_green("INFO: Index connected.")
-            actual_index = index % len(image_files)
+        if sequential_mode:
+            current_index = tracker.get(tracker_key, 0)
+            
+            if current_index >= total_images:
+                # 1. Print clean status completion text to console
+                print(f"\033[91m❌ QUEUE COMPLETE: Last image reached from index. Handled image {total_images} from {total_images}.\033[0m")
+                
+                # 2. Reset back to zero for the next future directory run
+                tracker[tracker_key] = 0
+                
+                # 3. FIX: Trigger the native, low-level ComfyUI queue engine cancellation function
+                nodes.interrupt_processing()
+                
+                # 4. Return an elegant, safe blank structure to gracefully close the loop
+                empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+                return (empty_image, "Finished", 64, 64, "")
+            
+            actual_index = current_index
             image_file = image_files[actual_index]
+            print_green(f"ℹ️ [Sequential Mode] Processing image {actual_index + 1} of {total_images}: {image_file}")
+            
+            tracker[tracker_key] += 1
+            
+        elif index != -1:
+            actual_index = index % total_images
+            image_file = image_files[actual_index]
+            print_green(f"ℹ️ [External Index Overrode] Processing image {actual_index + 1} of {total_images}")
         else:
-            print_green(f"INFO: Random seed pick. Total images: {len(image_files)}")
+            print_green(f"ℹ️ [Random Seed Pick] Total images available: {total_images}")
             rng = random.Random(seed)
             image_file = rng.choice(image_files)
 
         filename = Path(image_file).stem
         img_path = os.path.join(target_folder_path, image_file)
 
-        # --- New Caption Pairing Functionality ---
         caption_content = ""
-        # Find the text file by replacing the image extension with .txt in its absolute path
         txt_path = os.path.splitext(img_path)[0] + ".txt"
-        
         if os.path.exists(txt_path):
             try:
                 with open(txt_path, "r", encoding="utf-8") as f:
                     caption_content = f.read()
-                print_green(f"INFO: Loaded pairing caption file for {filename}")
-            except Exception as e:
-                print_brown(f"Error reading caption file {txt_path}: {e}")
+            except Exception:
                 caption_content = ""
 
         try:
             img = Image.open(img_path)
             img = ImageOps.exif_transpose(img)
-            
             width, height = img.size
 
             if img.mode == 'I':
@@ -956,33 +771,244 @@ class YANCLoadImageFromFolder:
 
             if scale_enabled:
                 samples = output_image.movedim(-1, 1)
-                
                 current_pixels = (width * height) / 1000000.0
                 scale_factor = math.sqrt(megapixel_target / current_pixels)
-                
-                new_width = int(round(width * scale_factor))
-                new_height = int(round(height * scale_factor))
-                
-                new_width = max(64, (new_width // 8) * 8)
-                new_height = max(64, (new_height // 8) * 8)
-                
+                new_width = max(64, (int(round(width * scale_factor)) // 8) * 8)
+                new_height = max(64, (int(round(height * scale_factor)) // 8) * 8)
                 samples = comfy.utils.common_upscale(samples, new_width, new_height, "lanczos", "center")
-                
                 output_image = samples.movedim(1, -1)
                 width, height = new_width, new_height
 
             return (output_image, filename, width, height, caption_content)
-            
         except Exception as e:
             print_brown(f"Error loading image {image_file}: {e}")
             return (torch.zeros((1, 64, 64, 3)), "Error", 64, 64, "")
 
+
+# ------------------------------------------------------------------------------------------------------------------ #
+class YANCSaveImage:
+    def __init__(self):
+        self.output_dir = folder_paths.get_output_directory()
+        self.type = "output"
+        self.compress_level = 4
+
     @classmethod
-    def IS_CHANGED(s, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, index=-1):
-        m = hashlib.sha256()
-        footprint = f"{image_folder}_{include_subfolders}_{seed}_{scale_enabled}_{megapixel_target}_{index}"
-        m.update(footprint.encode())
-        return m.digest().hex()
+    def INPUT_TYPES(s):
+        return {"required":
+                {"images": ("IMAGE", ),
+                 "filename_prefix": ("STRING", {"default": "ComfyUI"}), # Re-added prefix widget
+                 "folder": ("STRING", {"default": ""}),
+                 "extension": (["png", "jpg", "webp"],),
+                 "quality": ("INT", {"default": 95, "min": 0, "max": 100}),
+                 },
+                "optional":
+                    {"filename_opt": ("STRING", {"forceInput": True})},
+                "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
+                }
+
+    RETURN_TYPES = ()
+    FUNCTION = "do_it"
+    OUTPUT_NODE = True
+    CATEGORY = yanc_root_name + yanc_sub_image
+
+    def do_it(self, images, extension, quality, filename_opt=None, folder="", filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
+        folder_str = folder.strip() if folder else ""
+        
+        # Resolve destination path directory safely
+        if os.path.isabs(folder_str):
+            full_output_folder = os.path.normpath(folder_str)
+            subfolder = os.path.basename(full_output_folder)
+        else:
+            folder_clean = folder_str.replace("\\", "/").strip("/")
+            if folder_clean.lower().startswith("output"):
+                folder_clean = folder_clean[6:].strip("/")
+            full_output_folder = os.path.normpath(os.path.join(self.output_dir, folder_clean))
+            subfolder = folder_clean
+
+        os.makedirs(full_output_folder, exist_ok=True)
+        results = list()
+
+        for (batch_number, image) in enumerate(images):
+            # Prioritize filename_opt from the loader node, fallback to filename_prefix string box
+            file_core = filename_opt if filename_opt else filename_prefix
+            if "%" in file_core:
+                file_core = replace_dt_placeholders(file_core)
+
+            file = f"{file_core}.{extension}" if len(images) == 1 else f"{file_core}_{batch_number}.{extension}"
+            save_path = os.path.join(full_output_folder, file)
+
+            # --- CHECK AND SKIP SAVING ---
+            if os.path.exists(save_path):
+                print(f"\033[33m⚠️ Image exists, skipping.\033[0m")
+                results.append({"filename": file, "subfolder": subfolder, "type": self.type})
+                continue
+
+            i = 255. * image.cpu().numpy()
+            img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+            metadata = None
+
+            if extension == "png":
+                if not args.disable_metadata:
+                    metadata = PngInfo()
+                    if prompt is not None:
+                        metadata.add_text("prompt", json.dumps(prompt))
+                    if extra_pnginfo is not None:
+                        for x in extra_pnginfo:
+                            metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+                img.save(save_path, pnginfo=metadata, compress_level=self.compress_level)
+            elif extension in ["jpg", "webp"]:
+                if not args.disable_metadata:
+                    metadata = {}
+                    if prompt is not None:
+                        metadata["prompt"] = prompt
+                    if extra_pnginfo is not None:
+                        for key, value in extra_pnginfo.items():
+                            metadata[key] = value
+                    img.info["comment"] = json.dumps(metadata)
+                
+                if extension == "jpg":
+                    img.save(save_path, quality=quality)
+                else:
+                    img.save(save_path, quality=quality, method=6)
+
+            results.append({"filename": file, "subfolder": subfolder, "type": self.type})
+
+        return {"ui": {"images": results}}
+
+# ------------------------------------------------------------------------------------------------------------------ #
+
+# Create an in-memory tracker at the very top of your file (outside the class definitions)
+# This keeps track of the index for every instance of the node across queues
+if "YANC_FOLDER_INDEX_TRACKER" not in globals():
+    globals()["YANC_FOLDER_INDEX_TRACKER"] = {}
+
+class YANCLoadImageFromFolder:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image_folder": ("STRING", {"default": ""}),
+                "include_subfolders": ("BOOLEAN", {"default": False}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "scale_enabled": ("BOOLEAN", {"default": False}),
+                "megapixel_target": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 64.0, "step": 0.1}),
+                "sequential_mode": ("BOOLEAN", {"default": False}),
+                "reset_sequential": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "index": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff, "forceInput": True}),
+            }
+        }
+
+    CATEGORY = yanc_root_name + yanc_sub_image
+    RETURN_TYPES = ("IMAGE", "STRING", "INT", "INT", "STRING")
+    RETURN_NAMES = ("image", "file_name", "width", "height", "caption")
+    FUNCTION = "do_it"
+
+    def do_it(self, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, sequential_mode, reset_sequential, index=-1):
+        tracker_key = f"image_{image_folder}"
+        tracker = globals().get("YANC_FOLDER_INDEX_TRACKER", {})
+
+        if reset_sequential or tracker_key not in tracker:
+            tracker[tracker_key] = 0
+
+        base_path = folder_paths.get_input_directory()
+        target_folder_path = os.path.join(base_path, image_folder)
+
+        if not os.path.exists(target_folder_path):
+            print_brown(f"Folder {target_folder_path} does not exist.")
+            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+            return (empty_image, "None", 64, 64, "")
+
+        valid_extensions = ('.jpg', '.jpeg', '.png', '.webp')
+        image_files = []
+
+        if include_subfolders:
+            for root, _, files in os.walk(target_folder_path):
+                for file in files:
+                    if file.lower().endswith(valid_extensions):
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, target_folder_path)
+                        image_files.append(rel_path.replace("\\", "/"))
+        else:
+            try:
+                files = os.listdir(target_folder_path)
+                image_files = [file for file in files if file.lower().endswith(valid_extensions)]
+            except Exception as e:
+                print_brown(f"Error reading folder: {e}")
+                return (torch.zeros((1, 64, 64, 3)), "None", 64, 64, "")
+
+        if not image_files:
+            print_cyan(f"No valid images found in: {image_folder}")
+            return (torch.zeros((1, 64, 64, 3)), "None", 64, 64, "")
+
+        image_files.sort()
+        total_images = len(image_files)
+
+        if sequential_mode:
+            current_index = tracker.get(tracker_key, 0)
+            
+            if current_index >= total_images:
+                print(f"\033[91m❌ QUEUE COMPLETE: Last image reached from index. Handled image {total_images} from {total_images}.\033[0m")
+                nodes.interrupt_processing()
+                empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+                return (empty_image, "Finished", 64, 64, "")
+            
+            actual_index = current_index
+            image_file = image_files[actual_index]
+            print_green(f"ℹ️ [Sequential Mode] Processing image {actual_index + 1} of {total_images}: {image_file}")
+            
+            tracker[tracker_key] += 1
+            
+        elif index != -1:
+            actual_index = index % total_images
+            image_file = image_files[actual_index]
+            print_green(f"ℹ️ [External Index Overrode] Processing image {actual_index + 1} of {total_images}")
+        else:
+            print_green(f"ℹ️ [Random Seed Pick] Total images available: {total_images}")
+            rng = random.Random(seed)
+            image_file = rng.choice(image_files)
+
+        filename = Path(image_file).stem
+        img_path = os.path.join(target_folder_path, image_file)
+
+        caption_content = ""
+        # FIX: Added [0] to get the path string element from the splitext tuple
+        txt_path = os.path.splitext(img_path)[0] + ".txt"
+        if os.path.exists(txt_path):
+            try:
+                with open(txt_path, "r", encoding="utf-8") as f:
+                    caption_content = f.read()
+            except Exception:
+                caption_content = ""
+
+        try:
+            img = Image.open(img_path)
+            img = ImageOps.exif_transpose(img)
+            width, height = img.size
+
+            if img.mode == 'I':
+                img = img.point(lambda i: i * (1 / 255))
+            
+            output_image = img.convert("RGB")
+            output_image = np.array(output_image).astype(np.float32) / 255.0
+            output_image = torch.from_numpy(output_image)[None,]
+
+            if scale_enabled:
+                samples = output_image.movedim(-1, 1)
+                current_pixels = (width * height) / 1000000.0
+                scale_factor = math.sqrt(megapixel_target / current_pixels)
+                new_width = max(64, (int(round(width * scale_factor)) // 8) * 8)
+                new_height = max(64, (int(round(height * scale_factor)) // 8) * 8)
+                samples = comfy.utils.common_upscale(samples, new_width, new_height, "lanczos", "center")
+                output_image = samples.movedim(1, -1)
+                width, height = new_width, new_height
+
+            return (output_image, filename, width, height, caption_content)
+        except Exception as e:
+            print_brown(f"Error loading image {image_file}: {e}")
+            return (torch.zeros((1, 64, 64, 3)), "Error", 64, 64, "")
+
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -2478,18 +2504,17 @@ class YANCTextPickLineByIndex:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCSaveText:
     def __init__(self):
         self.output_dir = folder_paths.get_output_directory()
-        self.prefix_append = ""
+        self.type = "output"
 
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
                 "text": ("STRING", {"forceInput": True}),
-                "filename_prefix": ("STRING", {"default": "ComfyUI"}),
+                "filename_prefix": ("STRING", {"default": "ComfyUI"}), # Re-added prefix widget
                 "folder": ("STRING", {"default": ""}),
             },
             "optional": {
@@ -2498,55 +2523,40 @@ class YANCSaveText:
         }
 
     RETURN_TYPES = ()
-    RETURN_NAMES = ()
-
     FUNCTION = "do_it"
-
     OUTPUT_NODE = True
-
     CATEGORY = yanc_root_name + yanc_sub_text
 
     def do_it(self, text, folder=None, filename_prefix="ComfyUI", filename_opt=None):
-        if folder:
-            filename_prefix += self.prefix_append
-            filename_prefix = os.sep.join([folder, filename_prefix])
+        folder_str = folder.strip() if folder else ""
+        
+        if os.path.isabs(folder_str):
+            full_output_folder = os.path.normpath(folder_str)
         else:
-            filename_prefix += self.prefix_append
+            folder_clean = folder_str.replace("\\", "/").strip("/")
+            if folder_clean.lower().startswith("output"):
+                folder_clean = folder_clean[6:].strip("/")
+            full_output_folder = os.path.normpath(os.path.join(self.output_dir, folder_clean))
 
-        if "%" in filename_prefix:
-            filename_prefix = replace_dt_placeholders(filename_prefix)
+        os.makedirs(full_output_folder, exist_ok=True)
 
-        full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(
-            filename_prefix, self.output_dir)
+        # Prioritize filename_opt from the loader node, fallback to filename_prefix string box
+        file_core = filename_opt if filename_opt else filename_prefix
+        if "%" in file_core:
+            file_core = replace_dt_placeholders(file_core)
 
-        counter = 1
-
-        if not filename_opt:
-            if os.path.exists(full_output_folder) and os.listdir(full_output_folder):
-                filtered_filenames = list(filter(
-                    lambda fname: fname.startswith(
-                        filename + "_") and fname[len(filename) + 1:-4].isdigit(),
-                    os.listdir(full_output_folder)
-                ))
-
-                if filtered_filenames:
-                    max_counter = max(
-                        int(fname[len(filename) + 1:-4])
-                        for fname in filtered_filenames
-                    )
-                    counter = max_counter + 1
-
-            file = f"{filename}_{counter:05}.txt"
-        else:
-            file = f"{filename_opt}.txt"
-
+        file = f"{file_core}.txt"
         save_path = os.path.join(full_output_folder, file)
+
+        # --- CHECK AND SKIP SAVING ---
+        if os.path.exists(save_path):
+            print(f"\033[33m⚠️ Image exists, skipping.\033[0m")
+            return {"ui": {"text": text}, }
 
         with open(save_path, "w", encoding="utf-8") as text_file:
             text_file.write(text)
 
         return {"ui": {"text": text}, }
-
 
 # ------------------------------------------------------------------------------------------------------------------ #
 NODE_CLASS_MAPPINGS = {
