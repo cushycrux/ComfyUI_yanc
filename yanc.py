@@ -232,6 +232,7 @@ def slerp(val, low, high):
 # ------------------------------------------------------------------------------------------------------------------ #
 # Comfy classes                                                                                                      #
 # ------------------------------------------------------------------------------------------------------------------ #
+
 class YANCLoadTextFromFolder:
     @classmethod
     def INPUT_TYPES(s):
@@ -240,6 +241,8 @@ class YANCLoadTextFromFolder:
                 "text_folder": ("STRING", {"default": ""}),
                 "include_subfolders": ("BOOLEAN", {"default": False}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                # ADDED: Safe start_at_index entry mirroring your image node structure
+                "start_at_index": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "sequential_mode": ("BOOLEAN", {"default": False}),
                 "reset_sequential": ("BOOLEAN", {"default": False}),
             },
@@ -253,12 +256,13 @@ class YANCLoadTextFromFolder:
     RETURN_NAMES = ("text_content", "file_name")
     FUNCTION = "do_it"
 
-    def do_it(self, text_folder, include_subfolders, seed, sequential_mode, reset_sequential, index=-1):
+    def do_it(self, text_folder, include_subfolders, seed, start_at_index, sequential_mode, reset_sequential, index=-1):
         tracker_key = f"text_{text_folder}"
         tracker = globals().get("YANC_FOLDER_INDEX_TRACKER", {})
 
+        # Clear/initialize tracking index securely to the chosen starting frame layout
         if reset_sequential or tracker_key not in tracker:
-            tracker[tracker_key] = 0
+            tracker[tracker_key] = start_at_index
 
         base_path = folder_paths.get_input_directory()
         full_folder_path = os.path.join(base_path, text_folder)
@@ -293,11 +297,11 @@ class YANCLoadTextFromFolder:
         total_files = len(txt_files)
 
         if sequential_mode:
-            current_index = tracker.get(tracker_key, 0)
+            current_index = tracker.get(tracker_key, start_at_index)
             
             if current_index >= total_files:
                 print(f"\033[91m❌ QUEUE COMPLETE: Last text file reached from index. Handled text file {total_files} from {total_files}.\033[0m")
-                tracker[tracker_key] = 0
+                tracker[tracker_key] = start_at_index
                 nodes.interrupt_processing()
                 return ("", "Finished")
             
@@ -328,24 +332,24 @@ class YANCLoadTextFromFolder:
             return ("", selected_file)
 
     @classmethod
-    def IS_CHANGED(s, text_folder, include_subfolders, seed, sequential_mode, reset_sequential, index=-1):
-        # Force a refresh every queue execution if using sequential mode
+    def IS_CHANGED(s, text_folder, include_subfolders, seed, start_at_index, sequential_mode, reset_sequential, index=-1):
+        # Clean cache bypass fix matching the image node functionality
         if sequential_mode:
             return random.random()
+            
         m = hashlib.sha256()
-        footprint = f"{text_folder}_{include_subfolders}_{seed}_{index}_{reset_sequential}"
+        footprint = f"{text_folder}_{include_subfolders}_{seed}_{start_at_index}_{sequential_mode}_{reset_sequential}_{index}"
         m.update(footprint.encode())
         return m.digest().hex()
 
     @classmethod
-    def VALIDATE_INPUTS(s, text_folder, include_subfolders, seed, sequential_mode, reset_sequential, **kwargs):
+    def VALIDATE_INPUTS(s, text_folder, include_subfolders, seed, start_at_index, sequential_mode, reset_sequential, **kwargs):
         base_path = folder_paths.get_input_directory()
         full_folder_path = os.path.join(base_path, text_folder)
-        
         if not os.path.exists(full_folder_path):
             return f"Folder '{text_folder}' does not exist in input directory."
-        
         return True
+
 
 # ------------------------------------------------------------------------------------------------------------------ #
 class YANCRotateImage:
@@ -859,6 +863,17 @@ class YANCSaveImage:
             # --- CHECK AND SKIP SAVING ---
             if os.path.exists(save_path):
                 print(f"\033[33m⚠️ Image exists, skipping.\033[0m")
+                
+                # --- BROADCAST TO LOADER ---
+                # Safely initialize and register this filename stem to the shared runtime cache
+                if "YANC_SAVED_FILES_REGISTRY" not in globals():
+                    globals()["YANC_SAVED_FILES_REGISTRY"] = set()
+                
+                # Track the pure original file name stem so the loader can match it instantly
+                filename_stem = Path(file).stem
+                globals()["YANC_SAVED_FILES_REGISTRY"].add(filename_stem)
+                # ---------------------------
+
                 results.append({"filename": file, "subfolder": subfolder, "type": self.type})
                 continue
 
@@ -888,11 +903,13 @@ class YANCSaveImage:
                 if extension == "jpg":
                     img.save(save_path, quality=quality)
                 else:
-                    img.save(save_path, quality=quality, method=6)
+                    # CHANGED: Lowered method from 6 to 2 for a ~10x speedup
+                    img.save(save_path, quality=quality, method=2)
 
             results.append({"filename": file, "subfolder": subfolder, "type": self.type})
 
         return {"ui": {"images": results}}
+
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -911,6 +928,7 @@ class YANCLoadImageFromFolder:
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "scale_enabled": ("BOOLEAN", {"default": False}),
                 "megapixel_target": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 64.0, "step": 0.1}),
+                "start_at_index": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "sequential_mode": ("BOOLEAN", {"default": False}),
                 "reset_sequential": ("BOOLEAN", {"default": False}),
             },
@@ -924,12 +942,13 @@ class YANCLoadImageFromFolder:
     RETURN_NAMES = ("image", "file_name", "width", "height", "caption")
     FUNCTION = "do_it"
 
-    def do_it(self, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, sequential_mode, reset_sequential, index=-1):
+    def do_it(self, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, start_at_index, sequential_mode, reset_sequential, index=-1):
         tracker_key = f"image_{image_folder}"
         tracker = globals().get("YANC_FOLDER_INDEX_TRACKER", {})
 
+        # Use start_at_index when resetting or initializing a new folder tracker
         if reset_sequential or tracker_key not in tracker:
-            tracker[tracker_key] = 0
+            tracker[tracker_key] = start_at_index
 
         base_path = folder_paths.get_input_directory()
         target_folder_path = os.path.join(base_path, image_folder)
@@ -965,10 +984,11 @@ class YANCLoadImageFromFolder:
         total_images = len(image_files)
 
         if sequential_mode:
-            current_index = tracker.get(tracker_key, 0)
+            current_index = tracker.get(tracker_key, start_at_index)
             
             if current_index >= total_images:
                 print(f"\033[91m❌ QUEUE COMPLETE: Last image reached from index. Handled image {total_images} from {total_images}.\033[0m")
+                tracker[tracker_key] = start_at_index
                 nodes.interrupt_processing()
                 empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
                 return (empty_image, "Finished", 64, 64, "")
@@ -992,7 +1012,6 @@ class YANCLoadImageFromFolder:
         img_path = os.path.join(target_folder_path, image_file)
 
         caption_content = ""
-        # FIX: Added [0] to get the path string element from the splitext tuple
         txt_path = os.path.splitext(img_path)[0] + ".txt"
         if os.path.exists(txt_path):
             try:
@@ -1027,6 +1046,16 @@ class YANCLoadImageFromFolder:
         except Exception as e:
             print_brown(f"Error loading image {image_file}: {e}")
             return (torch.zeros((1, 64, 64, 3)), "Error", 64, 64, "")
+
+    @classmethod
+    def IS_CHANGED(s, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, start_at_index, sequential_mode, reset_sequential, index=-1):
+        # Force ComfyUI to evaluate node and advance index when using sequential mode
+        if sequential_mode:
+            return random.random()
+        m = hashlib.sha256()
+        footprint = f"{image_folder}_{include_subfolders}_{seed}_{scale_enabled}_{megapixel_target}_{start_at_index}_{reset_sequential}_{index}"
+        m.update(footprint.encode())
+        return m.digest().hex()
 
 
 # ------------------------------------------------------------------------------------------------------------------ #
