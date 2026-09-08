@@ -258,9 +258,13 @@ class YANCLoadTextFromFolder:
 
     def do_it(self, text_folder, include_subfolders, seed, start_at_index, sequential_mode, reset_sequential, index=-1):
         tracker_key = f"text_{text_folder}"
-        tracker = globals().get("YANC_FOLDER_INDEX_TRACKER", {})
+        
+        # Guard global state allocation securely
+        if "YANC_FOLDER_INDEX_TRACKER" not in globals():
+            globals()["YANC_FOLDER_INDEX_TRACKER"] = {}
+        tracker = globals()["YANC_FOLDER_INDEX_TRACKER"]
 
-        # Clear/initialize tracking index securely to the chosen starting frame layout
+        # Handle reset rules or standard initialization layout flags cleanly
         if reset_sequential or tracker_key not in tracker:
             tracker[tracker_key] = start_at_index
 
@@ -560,7 +564,12 @@ class YANCClearText:
 
     @classmethod
     def IS_CHANGED(s, text, chance):
-        return s.do_it(s, text, chance)
+        # Generates a reliable hash footprint based on inputs and a random seed 
+        # to ensure evaluation functions trigger predictably without recursion errors.
+        m = hashlib.sha256()
+        footprint = f"{text}_{chance}_{random.random()}"
+        m.update(footprint.encode('utf-8'))
+        return m.digest().hex()
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -581,31 +590,40 @@ class YANCTextReplace:
                     "multiline": False,
                     "default": ""
                 }),
+                "seed": ("INT", {
+                    "default": 0, 
+                    "min": 0, 
+                    "max": 0xffffffffffffffff
+                }),
             },
         }
+
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("text",)
     FUNCTION = "do_it"
-    CATEGORY = yanc_root_name + yanc_sub_text  # Ensure these are defined globally
-    
-    def do_it(self, text, find, replace):
+    CATEGORY = yanc_root_name + yanc_sub_text
+
+    def do_it(self, text, find, replace, seed):
         if not find:
             return (text,)
         
-        # Helper function to resolve wildcards like {option1|option2}
+        # Initialize the random number generator with the frozen seed input
+        rng = random.Random(seed)
+        
+        # Helper function to resolve wildcards like {option1|option2} safely
         def replace_wildcard(match):
             raw_content = match.group(1)
             options = raw_content.split("|")
             valid_options = [opt.strip() for opt in options if opt.strip()]
             if valid_options:
-                return random.choice(valid_options)
+                return rng.choice(valid_options)
             else:
                 return ""
         
-        # Apply wildcard resolution to the 'replace' string ONLY
+        # Apply wildcard choices to the replacement payload string only
         processed_replace = re.sub(r"\{([^{}]+)\}", replace_wildcard, replace)
         
-        # Perform standard text replacement
+        # Execute the replacement operation on the target text stream
         if find in text:
             final_text = text.replace(find, processed_replace)
         else:
@@ -614,8 +632,12 @@ class YANCTextReplace:
         return (final_text,)
 
     @classmethod
-    def IS_CHANGED(s, text, find, replace):
-        return random.random()
+    def IS_CHANGED(s, text, find, replace, seed):
+        # Create a reliable hash footprint based on inputs to check caching accurately
+        m = hashlib.sha256()
+        footprint = f"{text}_{find}_{replace}_{seed}"
+        m.update(footprint.encode('utf-8'))
+        return m.digest().hex()
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -670,13 +692,13 @@ class YANCTextRandomWeights:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCLoadImageAndFilename:
     @classmethod
     def INPUT_TYPES(s):
         input_dir = folder_paths.get_input_directory()
-
         files = []
+        
+        # Safely walk through the input folder and collect paths
         for root, dirs, filenames in os.walk(input_dir):
             for filename in filenames:
                 full_path = os.path.join(root, filename)
@@ -684,131 +706,78 @@ class YANCLoadImageAndFilename:
                 relative_path = relative_path.replace("\\", "/")
                 files.append(relative_path)
 
-        return {"required":
-                {"image": (sorted(files), {"image_upload": True}),
-                 "strip_extension": ("BOOLEAN", {"default": True})}
-                }
+        return {
+            "required": {
+                "image": (sorted(files), {"image_upload": True}),
+                "strip_extension": ("BOOLEAN", {"default": True})
+            }
+        }
 
     CATEGORY = yanc_root_name + yanc_sub_image
-
     RETURN_TYPES = ("IMAGE", "MASK", "STRING")
     RETURN_NAMES = ("IMAGE", "MASK", "FILENAME")
-
     FUNCTION = "do_it"
 
-    def do_it(self, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, sequential_mode, reset_sequential, index=-1):
-        tracker_key = f"image_{image_folder}"
-        tracker = globals().get("YANC_FOLDER_INDEX_TRACKER", {})
-
-        if reset_sequential or tracker_key not in tracker:
-            tracker[tracker_key] = 0
-
-        base_path = folder_paths.get_input_directory()
-        target_folder_path = os.path.join(base_path, image_folder)
-
-        if not os.path.exists(target_folder_path):
-            print_brown(f"Folder {target_folder_path} does not exist.")
+    def do_it(self, image, strip_extension):
+        # Resolve the actual file path on disk securely
+        image_path = folder_paths.get_annotated_filepath(image)
+        
+        if not os.path.exists(image_path):
+            print(f"\033[31m❌ Image path does not exist: {image_path}\033[0m")
             empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
-            return (empty_image, "None", 64, 64, "")
-
-        valid_extensions = ('.jpg', '.jpeg', '.png', '.webp')
-        image_files = []
-
-        if include_subfolders:
-            for root, _, files in os.walk(target_folder_path):
-                for file in files:
-                    if file.lower().endswith(valid_extensions):
-                        full_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(full_path, target_folder_path)
-                        image_files.append(rel_path.replace("\\", "/"))
-        else:
-            try:
-                files = os.listdir(target_folder_path)
-                image_files = [file for file in files if file.lower().endswith(valid_extensions)]
-            except Exception as e:
-                print_brown(f"Error reading folder: {e}")
-                return (torch.zeros((1, 64, 64, 3)), "None", 64, 64, "")
-
-        if not image_files:
-            print_cyan(f"No valid images found in: {image_folder}")
-            return (torch.zeros((1, 64, 64, 3)), "None", 64, 64, "")
-
-        image_files.sort()
-        total_images = len(image_files)
-
-        if sequential_mode:
-            current_index = tracker.get(tracker_key, 0)
-            
-            if current_index >= total_images:
-                # 1. Print clean status completion text to console
-                print(f"\033[91m❌ QUEUE COMPLETE: Last image reached from index. Handled image {total_images} from {total_images}.\033[0m")
-                
-                # 2. Reset back to zero for the next future directory run
-                tracker[tracker_key] = 0
-                
-                # 3. FIX: Trigger the native, low-level ComfyUI queue engine cancellation function
-                nodes.interrupt_processing()
-                
-                # 4. Return an elegant, safe blank structure to gracefully close the loop
-                empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
-                return (empty_image, "Finished", 64, 64, "")
-            
-            actual_index = current_index
-            image_file = image_files[actual_index]
-            print_green(f"ℹ️ [Sequential Mode] Processing image {actual_index + 1} of {total_images}: {image_file}")
-            
-            tracker[tracker_key] += 1
-            
-        elif index != -1:
-            actual_index = index % total_images
-            image_file = image_files[actual_index]
-            print_green(f"ℹ️ [External Index Overrode] Processing image {actual_index + 1} of {total_images}")
-        else:
-            print_green(f"ℹ️ [Random Seed Pick] Total images available: {total_images}")
-            rng = random.Random(seed)
-            image_file = rng.choice(image_files)
-
-        filename = Path(image_file).stem
-        img_path = os.path.join(target_folder_path, image_file)
-
-        caption_content = ""
-        txt_path = os.path.splitext(img_path)[0] + ".txt"
-        if os.path.exists(txt_path):
-            try:
-                with open(txt_path, "r", encoding="utf-8") as f:
-                    caption_content = f.read()
-            except Exception:
-                caption_content = ""
+            empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
+            return (empty_image, empty_mask, "None")
 
         try:
-            img = Image.open(img_path)
+            img = Image.open(image_path)
             img = ImageOps.exif_transpose(img)
-            width, height = img.size
-
-            if img.mode == 'I':
-                img = img.point(lambda i: i * (1 / 255))
             
+            # Extract mask cleanly if the image has transparency (alpha channel)
+            if img.mode == 'RGBA':
+                mask = np.array(img.split()[-1]).astype(np.float32) / 255.0
+                mask = 1.0 - torch.from_numpy(mask) # Invert mask for ComfyUI convention
+            else:
+                mask = torch.zeros((img.height, img.width), dtype=torch.float32)
+
+            # Convert to standard ComfyUI RGB Tensor format
             output_image = img.convert("RGB")
             output_image = np.array(output_image).astype(np.float32) / 255.0
             output_image = torch.from_numpy(output_image)[None,]
 
-            if scale_enabled:
-                samples = output_image.movedim(-1, 1)
-                current_pixels = (width * height) / 1000000.0
-                scale_factor = math.sqrt(megapixel_target / current_pixels)
-                new_width = max(64, (int(round(width * scale_factor)) // 8) * 8)
-                new_height = max(64, (int(round(height * scale_factor)) // 8) * 8)
-                samples = comfy.utils.common_upscale(samples, new_width, new_height, "lanczos", "center")
-                output_image = samples.movedim(1, -1)
-                width, height = new_width, new_height
+            # Resolve the clean file string name
+            filename = Path(image_path).stem if strip_extension else Path(image_path).name
 
-            return (output_image, filename, width, height, caption_content)
+            return (output_image, mask[None,], filename)
+            
         except Exception as e:
-            print_brown(f"Error loading image {image_file}: {e}")
-            return (torch.zeros((1, 64, 64, 3)), "Error", 64, 64, "")
+            print(f"\033[31m❌ Error loading image {image}: {e}\033[0m")
+            empty_image = torch.zeros((1, 64, 64, 3), dtype=torch.float32)
+            empty_mask = torch.zeros((1, 64, 64), dtype=torch.float32)
+            return (empty_image, empty_mask, "Error")
 
+    @classmethod
+    def IS_CHANGED(s, image, strip_extension):
+        image_path = folder_paths.get_annotated_filepath(image)
+        if not os.path.exists(image_path):
+            return ""
+            
+        # Generates a unique footprint based on the file contents to bypass caching issues
+        m = hashlib.sha256()
+        try:
+            with open(image_path, 'rb') as f:
+                m.update(f.read())
+            return m.digest().hex()
+        except Exception:
+            return random.random()
 
 # ------------------------------------------------------------------------------------------------------------------ #
+import os
+import json
+import numpy as np
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
+from pathlib import Path
+
 class YANCSaveImage:
     def __init__(self):
         self.output_dir = folder_paths.get_output_directory()
@@ -819,10 +788,11 @@ class YANCSaveImage:
     def INPUT_TYPES(s):
         return {"required":
                 {"images": ("IMAGE", ),
-                 "filename_prefix": ("STRING", {"default": "ComfyUI"}), # Re-added prefix widget
+                 "filename_prefix": ("STRING", {"default": "ComfyUI"}),
                  "folder": ("STRING", {"default": ""}),
                  "extension": (["png", "jpg", "webp"],),
                  "quality": ("INT", {"default": 95, "min": 0, "max": 100}),
+                 "autorename_if_exists": ("BOOLEAN", {"default": False}), # Added the true toggle here
                  },
                 "optional":
                     {"filename_opt": ("STRING", {"forceInput": True})},
@@ -834,7 +804,7 @@ class YANCSaveImage:
     OUTPUT_NODE = True
     CATEGORY = yanc_root_name + yanc_sub_image
 
-    def do_it(self, images, extension, quality, filename_opt=None, folder="", filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
+    def do_it(self, images, extension, quality, autorename_if_exists=False, filename_opt=None, folder="", filename_prefix="ComfyUI", prompt=None, extra_pnginfo=None):
         folder_str = folder.strip() if folder else ""
         
         # Resolve destination path directory safely
@@ -857,26 +827,41 @@ class YANCSaveImage:
             if "%" in file_core:
                 file_core = replace_dt_placeholders(file_core)
 
-            file = f"{file_core}.{extension}" if len(images) == 1 else f"{file_core}_{batch_number}.{extension}"
+            file_stem = file_core if len(images) == 1 else f"{file_core}_{batch_number}"
+            file = f"{file_stem}.{extension}"
             save_path = os.path.join(full_output_folder, file)
 
-            # --- CHECK AND SKIP SAVING ---
+            # --- CHECK AND HANDLE EXISTING FILES ---
             if os.path.exists(save_path):
-                print(f"\033[33m⚠️ Image exists, skipping.\033[0m")
-                
-                # --- BROADCAST TO LOADER ---
-                # Safely initialize and register this filename stem to the shared runtime cache
-                if "YANC_SAVED_FILES_REGISTRY" not in globals():
-                    globals()["YANC_SAVED_FILES_REGISTRY"] = set()
-                
-                # Track the pure original file name stem so the loader can match it instantly
-                filename_stem = Path(file).stem
-                globals()["YANC_SAVED_FILES_REGISTRY"].add(filename_stem)
-                # ---------------------------
+                if autorename_if_exists:
+                    # Toggle is ON: Loop until a completely free number slot is found
+                    counter = 1
+                    while True:
+                        test_file = f"{file_stem}_{counter:07d}.{extension}"
+                        test_path = os.path.join(full_output_folder, test_file)
+                        if not os.path.exists(test_path):
+                            file = test_file
+                            save_path = test_path
+                            break
+                        counter += 1
+                        if counter > 9999999:
+                            raise RuntimeError("Autorename limit exceeded (10 million files limit reached).")
+                else:
+                    # Toggle is OFF: Run the original skip function
+                    print(f"\033[33m⚠️ Image exists, skipping.\033[0m")
+                    
+                    # --- BROADCAST TO LOADER ---
+                    if "YANC_SAVED_FILES_REGISTRY" not in globals():
+                        globals()["YANC_SAVED_FILES_REGISTRY"] = set()
+                    
+                    filename_stem = Path(file).stem
+                    globals()["YANC_SAVED_FILES_REGISTRY"].add(filename_stem)
+                    # ---------------------------
 
-                results.append({"filename": file, "subfolder": subfolder, "type": self.type})
-                continue
+                    results.append({"filename": file, "subfolder": subfolder, "type": self.type})
+                    continue
 
+            # --- ACTUAL FILE SAVING PROCESS ---
             i = 255. * image.cpu().numpy()
             img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
             metadata = None
@@ -903,7 +888,6 @@ class YANCSaveImage:
                 if extension == "jpg":
                     img.save(save_path, quality=quality)
                 else:
-                    # CHANGED: Lowered method from 6 to 2 for a ~10x speedup
                     img.save(save_path, quality=quality, method=2)
 
             results.append({"filename": file, "subfolder": subfolder, "type": self.type})
@@ -913,8 +897,6 @@ class YANCSaveImage:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-# Create an in-memory tracker at the very top of your file (outside the class definitions)
-# This keeps track of the index for every instance of the node across queues
 if "YANC_FOLDER_INDEX_TRACKER" not in globals():
     globals()["YANC_FOLDER_INDEX_TRACKER"] = {}
 
@@ -944,7 +926,11 @@ class YANCLoadImageFromFolder:
 
     def do_it(self, image_folder, include_subfolders, seed, scale_enabled, megapixel_target, start_at_index, sequential_mode, reset_sequential, index=-1):
         tracker_key = f"image_{image_folder}"
-        tracker = globals().get("YANC_FOLDER_INDEX_TRACKER", {})
+        
+        # Guard global state allocation securely
+        if "YANC_FOLDER_INDEX_TRACKER" not in globals():
+            globals()["YANC_FOLDER_INDEX_TRACKER"] = {}
+        tracker = globals()["YANC_FOLDER_INDEX_TRACKER"]
 
         # Use start_at_index when resetting or initializing a new folder tracker
         if reset_sequential or tracker_key not in tracker:
@@ -1270,7 +1256,6 @@ class YANCResolutionByAspectRatio:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCNIKSampler:
     @classmethod
     def INPUT_TYPES(s):
@@ -1295,30 +1280,26 @@ class YANCNIKSampler:
                 }
 
     RETURN_TYPES = ("LATENT",)
-    RETURN_NAME = ("latent",)
+    RETURN_NAMES = ("latent",)
     FUNCTION = "do_it"
 
     CATEGORY = yanc_root_name + yanc_sub_nik
 
-    def do_it(self, model, seed, steps, cfg, cfg_noise, sampler_name, scheduler, positive, negative, latent_image, noise_strength, latent_noise, inject_time=0.5, denoise=1.0, mask=None):
-
+    def do_it(self, model, seed, steps, cfg, cfg_noise, sampler_name, scheduler, positive, negative, latent_image, noise_strength, latent_noise=None, inject_time=0.5, denoise=1.0, mask=None):
         inject_at_step = round(steps * inject_time)
         print("Inject at step: " + str(inject_at_step))
 
-        empty_latent = False if torch.all(
-            latent_image["samples"]) != 0 else True
+        empty_latent = False if torch.all(latent_image["samples"] == 0) else True
 
         print_cyan("Sampling first step image.")
+        # Fixed: ComfyUI samplers return a tuple (latent_dict, tensor); extracting index [0] avoids an attribute crash
         samples_base_sampler = nodes.common_ksampler(model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image,
-                                                     denoise=denoise, disable_noise=False, start_step=0, last_step=inject_at_step, force_full_denoise=True)
+                                                     denoise=denoise, disable_noise=False, start_step=0, last_step=inject_at_step, force_full_denoise=True)[0]
 
         if mask is not None and empty_latent:
-            print_cyan(
-                "Sampling full image for unmasked areas. You can avoid this step by providing a non empty latent.")
+            print_cyan("Sampling full image for unmasked areas. You can avoid this step by providing a non empty latent.")
             samples_base_sampler2 = nodes.common_ksampler(
-                model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0)
-
-        samples_base_sampler = samples_base_sampler[0]
+                model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0)[0]
 
         if mask is not None and not empty_latent:
             samples_base_sampler = latent_image.copy()
@@ -1327,14 +1308,33 @@ class YANCNIKSampler:
         samples_out = latent_image.copy()
         samples_out["samples"] = latent_image["samples"].clone()
 
-        samples_noise = latent_noise.copy()
-        samples_noise = latent_noise["samples"].clone()
+        # Secure matching execution devices across inputs
+        target_device = samples_base_sampler["samples"].device
+
+        if latent_noise is not None:
+            samples_noise = latent_noise["samples"].clone().to(target_device)
+        else:
+            samples_noise = torch.randn_like(samples_base_sampler["samples"], device=target_device)
 
         if samples_base_sampler["samples"].shape != samples_noise.shape:
-            samples_noise.permute(0, 3, 1, 2)
+            # Fixed syntax typo: verified matching dimension constraints
+            if samples_noise.shape[-1] in [3, 4] and samples_noise.dim() == 4:
+                samples_noise = samples_noise.permute(0, 3, 1, 2)
+            
+            # Fixed tuple error: explicitly indexed shape positions [2] and [3] for spatial layout
+            target_height = samples_base_sampler["samples"].shape[2]
+            target_width = samples_base_sampler["samples"].shape[3]
+            
             samples_noise = comfy.utils.common_upscale(
-                samples_noise, samples_base_sampler["samples"].shape[3], samples_base_sampler["samples"].shape[2], 'bicubic', crop='center')
-            samples_noise.permute(0, 2, 3, 1)
+                samples_noise, 
+                target_width, 
+                target_height, 
+                upscale_method='bicubic', 
+                crop='center'
+            )
+            
+            if samples_noise.shape != samples_base_sampler["samples"].shape:
+                samples_noise = samples_noise.permute(0, 2, 3, 1)
 
         samples_o = samples_base_sampler["samples"] * (1 - noise_strength)
         samples_n = samples_noise * noise_strength
@@ -1344,22 +1344,50 @@ class YANCNIKSampler:
 
         samples_out["samples"] = samples_o + samples_n
 
-        patched_model = patch(model=model, multiplier=0.65)[
-            0] if round(cfg_noise, 1) > 8.0 else model
+        if round(cfg_noise, 1) > 8.0:
+            patched_model = patch(model=model, multiplier=0.65)[0]
+        else:
+            patched_model = model
 
         print_cyan("Applying noise.")
         result = nodes.common_ksampler(patched_model, seed, steps, cfg_noise, sampler_name, scheduler, positive, negative, samples_out,
                                        denoise=denoise, disable_noise=False, start_step=inject_at_step, last_step=steps, force_full_denoise=False)[0]
 
+        # --- SAFE LATENT MASK COMPOSITION ---
         if mask is not None:
-            print_cyan("Composing...")
-            destination = latent_image["samples"].clone(
-            ) if not empty_latent else samples_base_sampler2[0]["samples"].clone()
-            source = result["samples"]
-            result["samples"] = masks.composite(
-                destination, source, 0, 0, mask, 8)
+            print_cyan("Composing in Latent Space...")
+            
+            # Resolve destination backdrop base safely
+            if not empty_latent:
+                destination = latent_image["samples"].clone().to(target_device)
+            else:
+                destination = samples_base_sampler2["samples"].clone().to(target_device)
+                
+            source = result["samples"].to(target_device)
+            
+            # Fixed tuple error: explicitly indexed height and width array structures [2] and [3]
+            latent_h, latent_w = source.shape[2], source.shape[3]
+            
+            # Handle variable mask dimensions [H, W] -> [B, 1, H, W]
+            working_mask = mask.clone().to(target_device).float()
+            if working_mask.dim() == 2:
+                working_mask = working_mask.unsqueeze(0).unsqueeze(0)
+            elif working_mask.dim() == 3:
+                working_mask = working_mask.unsqueeze(1)
+                
+            # Linearly scale mask size down to fit latents perfectly
+            resized_mask = torch.nn.functional.interpolate(
+                working_mask, 
+                size=(latent_h, latent_w), 
+                mode="bilinear", 
+                align_corners=False
+            )
+            
+            # Blend tensors cleanly using explicit linear algebra inversion
+            result["samples"] = (source * resized_mask) + (destination * (1.0 - resized_mask))
 
         return (result,)
+
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -1847,39 +1875,37 @@ class YANCBrightness:
     FUNCTION = "do_it"
 
     def do_it(self, image, brightness, mask_opt=None):
-
         if mask_opt is not None:
-            mask = mask_opt.clone()
-            mask = permute_tt(mask.unsqueeze(-1))
+            mask = mask_opt.clone().unsqueeze(-1)
+            mask = permute_tt(mask)
         else:
             mask = torch.ones_like(image)
             mask = permute_tt(mask)
 
         img = image.clone()
         img = permute_tt(img)
-        img = F.adjust_brightness(img * mask, brightness)
-        img = img + permute_tt(image) * F.invert(mask)
-        img = permute_ft(img)
-
-        return (img,)
-
+        
+        # Apply adjustment to the masked area
+        adjusted = F.adjust_brightness(img, brightness) * mask
+        # Combine back with the unmasked original area using mathematical inversion
+        final_img = adjusted + (permute_tt(image) * (1.0 - mask))
+        
+        return (permute_ft(final_img),)
 
 # ------------------------------------------------------------------------------------------------------------------ #
-
 
 class YANCContrast:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required":
-                {
-                    "image": ("IMAGE",),
-                    "contrast": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                },
-                "optional":
-                {
-                    "mask_opt": ("MASK",),
-                }
-                }
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "contrast": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
+            },
+            "optional": {
+                "mask_opt": ("MASK",),
+            }
+        }
 
     CATEGORY = yanc_root_name + yanc_sub_image + yanc_sub_post_processing
 
@@ -1888,39 +1914,43 @@ class YANCContrast:
     FUNCTION = "do_it"
 
     def do_it(self, image, contrast, mask_opt=None):
-
+        # Handle optional mask dimensions and expand channels to match image shape
         if mask_opt is not None:
-            mask = mask_opt.clone()
-            mask = permute_tt(mask.unsqueeze(-1))
+            mask = mask_opt.clone().unsqueeze(-1)
+            mask = permute_tt(mask)
         else:
             mask = torch.ones_like(image)
             mask = permute_tt(mask)
 
         img = image.clone()
         img = permute_tt(img)
-        img = F.adjust_contrast(img * mask, contrast)
-        img = img + permute_tt(image) * F.invert(mask)
-        img = permute_ft(img)
+        
+        # Apply the contrast adjustment across the full target tensor channel mapping
+        adjusted = F.adjust_contrast(img, contrast)
+        
+        # Composite the adjusted area and the untouched original area using clean math inversion
+        final_img = (adjusted * mask) + (permute_tt(image) * (1.0 - mask))
+        
+        # Format the tensor structure back to the expected ComfyUI standard format output shape
+        img_out = permute_ft(final_img)
 
-        return (img,)
+        return (img_out,)
 
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCSaturation:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required":
-                {
-                    "image": ("IMAGE",),
-                    "saturation": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
-                },
-                "optional":
-                {
-                    "mask_opt": ("MASK",),
-                }
-                }
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "saturation": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.01}),
+            },
+            "optional": {
+                "mask_opt": ("MASK",),
+            }
+        }
 
     CATEGORY = yanc_root_name + yanc_sub_image + yanc_sub_post_processing
 
@@ -1929,22 +1959,27 @@ class YANCSaturation:
     FUNCTION = "do_it"
 
     def do_it(self, image, saturation, mask_opt=None):
-
+        # Handle optional mask dimensions and expand channels to match image shape
         if mask_opt is not None:
-            mask = mask_opt.clone()
-            mask = permute_tt(mask.unsqueeze(-1))
+            mask = mask_opt.clone().unsqueeze(-1)
+            mask = permute_tt(mask)
         else:
             mask = torch.ones_like(image)
             mask = permute_tt(mask)
 
         img = image.clone()
         img = permute_tt(img)
-        img = F.adjust_saturation(img * mask, saturation)
-        img = img + permute_tt(image) * F.invert(mask)
-        img = permute_ft(img)
+        
+        # Apply the saturation adjustment across the full target tensor channel mapping
+        adjusted = F.adjust_saturation(img, saturation)
+        
+        # Composite the adjusted area and the untouched original area using clean math inversion
+        final_img = (adjusted * mask) + (permute_tt(image) * (1.0 - mask))
+        
+        # Format the tensor structure back to the expected ComfyUI single-element tuple format
+        img_out = permute_ft(final_img)
 
-        return (img,)
-
+        return (img_out,)
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -1952,16 +1987,15 @@ class YANCSaturation:
 class YANCSharpen:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required":
-                {
-                    "image": ("IMAGE",),
-                    "sharpen": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 5.0, "step": 0.01}),
-                },
-                "optional":
-                {
-                    "mask_opt": ("MASK",),
-                }
-                }
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "sharpen": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 5.0, "step": 0.01}),
+            },
+            "optional": {
+                "mask_opt": ("MASK",),
+            }
+        }
 
     CATEGORY = yanc_root_name + yanc_sub_image + yanc_sub_post_processing
 
@@ -1970,22 +2004,27 @@ class YANCSharpen:
     FUNCTION = "do_it"
 
     def do_it(self, image, sharpen, mask_opt=None):
-
+        # Handle optional mask dimensions and expand channels to match image shape
         if mask_opt is not None:
-            mask = mask_opt.clone()
-            mask = permute_tt(mask.unsqueeze(-1))
+            mask = mask_opt.clone().unsqueeze(-1)
+            mask = permute_tt(mask)
         else:
             mask = torch.ones_like(image)
             mask = permute_tt(mask)
 
         img = image.clone()
         img = permute_tt(img)
-        img = F.adjust_sharpness(img * mask, sharpen)
-        img = img + permute_tt(image) * F.invert(mask)
-        img = permute_ft(img)
+        
+        # Apply the sharpness adjustment across the full target tensor channel mapping
+        adjusted = F.adjust_sharpness(img, sharpen)
+        
+        # Composite the adjusted area and the untouched original area using clean math inversion
+        final_img = (adjusted * mask) + (permute_tt(image) * (1.0 - mask))
+        
+        # Format the tensor structure back to the expected ComfyUI standard format output shape
+        img_out = permute_ft(final_img)
 
-        return (img,)
-
+        return (img_out,)
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -2142,20 +2181,18 @@ class YANCBloom:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCBlur:
     @classmethod
     def INPUT_TYPES(s):
-        return {"required":
-                {
-                    "image": ("IMAGE",),
-                    "intensity": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                },
-                "optional":
-                {
-                    "mask_opt": ("MASK",),
-                }
-                }
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "intensity": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            },
+            "optional": {
+                "mask_opt": ("MASK",),
+            }
+        }
 
     CATEGORY = yanc_root_name + yanc_sub_image + yanc_sub_post_processing
 
@@ -2164,31 +2201,39 @@ class YANCBlur:
     FUNCTION = "do_it"
 
     def do_it(self, image, intensity, mask_opt=None):
+        if intensity == 0.0:
+            return (image.clone(),)
 
         img = image.clone()
 
+        # Calculate a dynamic blur radius checking explicit indices instead of passing the raw tuple
         blur_radius_per_pixel = 0.02 * intensity
-        blur_radius = blur_radius_per_pixel * \
-            min(image.shape[1], image.shape[2])
+        blur_radius = blur_radius_per_pixel * min(image.shape[1], image.shape[2])
 
+        # Process the full blur map calculation through the PIL filtering layer
         blurred_img = tensor2pil(img)
-        blurred_img = blurred_img.filter(
-            ImageFilter.GaussianBlur(radius=blur_radius))
+        blurred_img = blurred_img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
         blurred_img = pil2tensor(blurred_img)
 
+        # Apply robust multi-channel masking to ensure complete axis safety
         if mask_opt is not None:
-            mask_opt = mask_opt.unsqueeze(3)
-            mask_opt = mask_opt.float()
-            mask_opt = mask_opt / mask_opt.max()
+            mask = mask_opt.clone().float()
+            
+            # Loop-expand trailing axes dynamically to guarantee 4D broadcasting symmetry
+            while mask.dim() < image.dim():
+                mask = mask.unsqueeze(-1)
+            
+            if mask.max() > 0:
+                mask = mask / mask.max()
 
-            img = (img * mask_opt) + (blurred_img * (1 - mask_opt))
+            # White mask areas (1.0) get blurred, black areas (0.0) stay crisp
+            img = (blurred_img * mask) + (img * (1.0 - mask))
         else:
             img = blurred_img
 
-        img = torch.clamp(img, 0, 1)
+        img = torch.clamp(img, 0.0, 1.0)
 
         return (img,)
-
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -2431,7 +2476,6 @@ class YANCFilmGrain:
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
-
 class YANCHue:
     @classmethod
     def INPUT_TYPES(s):
@@ -2443,20 +2487,16 @@ class YANCHue:
                 }
 
     CATEGORY = yanc_root_name + yanc_sub_image + yanc_sub_post_processing
-
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("image",)
     FUNCTION = "do_it"
 
     def do_it(self, image, hue_adjustment):
-
-        adjusted_image = tensor2pil(image)
-        adjusted_image = T.functional.adjust_hue(
-            adjusted_image, hue_adjustment)
-        adjusted_image = pil2tensor(adjusted_image)
-
-        return (adjusted_image,)
-
+        # Permute from [B, H, W, C] to [B, C, H, W] for Torchvision functional math processing
+        img = permute_tt(image)
+        adjusted = F.adjust_hue(img, hue_adjustment)
+        # Restore back to ComfyUI standard shape [B, H, W, C] cleanly
+        return (permute_ft(adjusted),)
 
 # ------------------------------------------------------------------------------------------------------------------ #
 
@@ -2562,8 +2602,9 @@ class YANCSaveText:
         return {
             "required": {
                 "text": ("STRING", {"forceInput": True}),
-                "filename_prefix": ("STRING", {"default": "ComfyUI"}), # Re-added prefix widget
+                "filename_prefix": ("STRING", {"default": "ComfyUI"}),
                 "folder": ("STRING", {"default": ""}),
+                "autorename_if_exists": ("BOOLEAN", {"default": False}),
             },
             "optional": {
                 "filename_opt": ("STRING", {"forceInput": True})
@@ -2575,9 +2616,10 @@ class YANCSaveText:
     OUTPUT_NODE = True
     CATEGORY = yanc_root_name + yanc_sub_text
 
-    def do_it(self, text, folder=None, filename_prefix="ComfyUI", filename_opt=None):
+    def do_it(self, text, folder="", filename_prefix="ComfyUI", autorename_if_exists=False, filename_opt=None):
         folder_str = folder.strip() if folder else ""
         
+        # Resolve destination path directory safely
         if os.path.isabs(folder_str):
             full_output_folder = os.path.normpath(folder_str)
         else:
@@ -2593,18 +2635,39 @@ class YANCSaveText:
         if "%" in file_core:
             file_core = replace_dt_placeholders(file_core)
 
-        file = f"{file_core}.txt"
+        file_stem = file_core
+        file = f"{file_stem}.txt"
         save_path = os.path.join(full_output_folder, file)
 
-        # --- CHECK AND SKIP SAVING ---
+        # --- CHECK AND HANDLE EXISTING FILES ---
         if os.path.exists(save_path):
-            print(f"\033[33m⚠️ Image exists, skipping.\033[0m")
-            return {"ui": {"text": text}, }
+            if autorename_if_exists:
+                # Toggle is ON: Loop until a completely free number slot is found
+                counter = 1
+                while True:
+                    test_file = f"{file_stem}_{counter:07d}.txt"
+                    test_path = os.path.join(full_output_folder, test_file)
+                    if not os.path.exists(test_path):
+                        file = test_file
+                        save_path = test_path
+                        break
+                    counter += 1
+                    if counter > 9999999:
+                        raise RuntimeError("Autorename limit exceeded (10 million text files limit reached).")
+            else:
+                # Toggle is OFF: Skip saving step entirely
+                print(f"\033[33m⚠️ Text file exists, skipping.\033[0m")
+                return {"ui": {"text": text}}
 
-        with open(save_path, "w", encoding="utf-8") as text_file:
-            text_file.write(text)
+        # --- ACTUAL TEXT SAVING PROCESS ---
+        try:
+            with open(save_path, "w", encoding="utf-8") as text_file:
+                text_file.write(text)
+        except Exception as e:
+            print(f"\033[31m❌ Error saving text file {file}: {e}\033[0m")
 
-        return {"ui": {"text": text}, }
+        return {"ui": {"text": text}}
+
 
 # ------------------------------------------------------------------------------------------------------------------ #
 NODE_CLASS_MAPPINGS = {
